@@ -1,44 +1,26 @@
 [build-system]
-requires = ["setuptools>=64", "wheel"]
+requires = ["setuptools>=64"]
 build-backend = "setuptools.build_meta"
 
 [project]
-name = "graphregistry"
+name = "graphdb"
 version = "0.1.0"
-description = "EPFL Graph Registry"
+description = "EPFL Graph DB Client"
 requires-python = ">=3.10"
 dependencies = [
-    "uvicorn",
-    "fastapi",
     "sqlalchemy",
     "tqdm",
     "loguru",
     "rich",
-    "elasticsearch==8.15.1",
-    "Levenshtein",
-    "requests",
-    "termcolor",
     "numpy",
     "pandas",
     "tabulate",
     "pyyaml",
-    "pymysql",
-    "flatten_dict",
-    "dictdiffer"
+    "pymysql"
 ]
 
 [project.scripts]
-# CLI entrypoint – note the path: graphregistry/core/cli.py -> main()
-graphregistry = "graphregistry.cli.main:main"
+graphdb = "graphdb.cli.main:main"
 
-# Tell setuptools what to package (and what to ignore)
 [tool.setuptools.packages.find]
-include = ["graphregistry*"]
-exclude = [
-    "config*",
-    "database*",
-    "resources*",
-    "node_modules*",
-    "scripts*",
-    "tests*",
-]
+include = ["graphdb*"]
