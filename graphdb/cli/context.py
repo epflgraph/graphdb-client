@@ -1,4 +1,5 @@
-# graphregistry/cli/context.py
+# graphdb/cli/context.py
+# This module defines the shared context for CLI commands, including the GraphDB instance.
 from dataclasses import dataclass
 from typing import TYPE_CHECKING
 

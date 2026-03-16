@@ -1,4 +1,5 @@
 # graphdb/cli/register.py
+# This module registers CLI commands based on specifications defined in `cli_definitions`.
 from graphdb.cli.specs import cli_definitions
 
 #==============================#

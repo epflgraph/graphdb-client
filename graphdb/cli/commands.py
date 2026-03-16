@@ -1,5 +1,5 @@
-# graphregistry/cli/cmd_db.py
-# Manage MySQL/MariaDB server operations.
+# graphdb/cli/commands.py
+# This module defines the handler functions for each CLI command.
 import json
 from pathlib import Path
 

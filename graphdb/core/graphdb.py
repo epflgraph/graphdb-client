@@ -17,19 +17,9 @@ from rich.text import Text
 from rich.rule import Rule
 from rich.markup import escape
 from rich import box
-from yaml import safe_load
+from graphdb.core.config import GraphDBConfig, GraphDBConfigError
 
 # Find the repository root directory
-REPO_ROOT = Path(__file__).resolve().parents[2]
-
-# Load index configuration in to JSON
-with open(f"{REPO_ROOT}/config.yaml", "r", encoding="utf-8") as f:
-    global_config = safe_load(f)
-
-# Initialise settings
-settings = json.loads(json.dumps(global_config, default=str))
-
-# Resolve repository root path
 REPO_ROOT = Path(__file__).resolve().parents[2]
 
 #------------------------------------------------#
@@ -387,61 +377,61 @@ class GraphDB():
         return cls._instance
 
     # Class constructor
-    def __init__(self, name="GraphDB"):
+    def __init__(self, name="GraphDB", config: Optional[GraphDBConfig] = None):
 
         # Check if the instance is already initialized
         if not self._initialized:  # Prevent reinitialization
             self.name = name
             self._initialized = True
 
-        # Initiate the MySQL engines
-        self.params_test        , self.engine_test         = self.initiate_engine('test')
-        self.params_prod        , self.engine_prod         = self.initiate_engine('prod')
-        self.params_xaas_prod   , self.engine_xaas_prod    = self.initiate_engine('xaas_prod')
-        self.params_xaas_coresrv, self.engine_xaas_coresrv = self.initiate_engine('xaas_coresrv')
-        self.params = {
-            'test'         : self.params_test,
-            'prod'         : self.params_prod,
-            'xaas_prod'    : self.params_xaas_prod,
-            'xaas_coresrv' : self.params_xaas_coresrv
-        }
-        self.engine = {
-            'test'         : self.engine_test,
-            'prod'         : self.engine_prod,
-            'xaas_prod'    : self.engine_xaas_prod,
-            'xaas_coresrv' : self.engine_xaas_coresrv
-        }
+        self.config = config or GraphDBConfig.from_default_file()
+        self.default_engine_name = self.config.default_env
 
-        # Set the MySQL password in an environment variable
-        os.environ['MYSQL_TEST_PWD']         = self.params_test['password']
-        os.environ['MYSQL_PROD_PWD']         = self.params_prod['password']
-        os.environ['MYSQL_XAAS_PROD_PWD']    = self.params_xaas_prod['password']
-        os.environ['MYSQL_XAAS_CORESRV_PWD'] = self.params_xaas_coresrv['password']
+        self.params = {}
+        self.engine = {}
+        self.base_command_mysql = {}
+        self.base_command_mysqldump = {}
 
-        # Build base shell command (MySQL)
-        self.base_command_mysql = {
-            'test'         : settings['mysql']['client_bin'].split(' ') + ['-u', self.params_test[        'username'], f'--password={os.getenv("MYSQL_TEST_PWD"        )}', '-h', self.params_test[        'host_address'], '-P', str(self.params_test[        'port'])],
-            'prod'         : settings['mysql']['client_bin'].split(' ') + ['-u', self.params_prod[        'username'], f'--password={os.getenv("MYSQL_PROD_PWD"        )}', '-h', self.params_prod[        'host_address'], '-P', str(self.params_prod[        'port'])],
-            'xaas_prod'    : settings['mysql']['client_bin'].split(' ') + ['-u', self.params_xaas_prod[   'username'], f'--password={os.getenv("MYSQL_XAAS_PROD_PWD"   )}', '-h', self.params_xaas_prod[   'host_address'], '-P', str(self.params_xaas_prod[   'port'])],
-            'xaas_coresrv' : settings['mysql']['client_bin'].split(' ') + ['-u', self.params_xaas_coresrv['username'], f'--password={os.getenv("MYSQL_XAAS_CORESRV_PWD")}', '-h', self.params_xaas_coresrv['host_address'], '-P', str(self.params_xaas_coresrv['port'])],
-        }
+        client_bin = self.config.client_bin
+        dump_bin = self.config.dump_bin
 
-        # Build base shell command (MySQLDump)
-        self.base_command_mysqldump = {
-            'test': settings['mysql']['dump_bin'].split(' ') + ['-u', self.params_test['username'], f'--password={os.getenv("MYSQL_TEST_PWD")}', '-h', self.params_test['host_address'], '-P', str(self.params_test['port']), '-v', '--no-create-db', '--no-create-info', '--skip-lock-tables', '--single-transaction'],
-            'prod': settings['mysql']['dump_bin'].split(' ') + ['-u', self.params_prod['username'], f'--password={os.getenv("MYSQL_PROD_PWD")}', '-h', self.params_prod['host_address'], '-P', str(self.params_prod['port']), '-v', '--no-create-db', '--no-create-info', '--skip-lock-tables', '--single-transaction'],
-        }
+        for env_name, env_config in self.config.environments.items():
+            params = env_config.as_dict()
+            self.params[env_name] = params
+            self.engine[env_name] = self._create_engine(params)
+
+            env_var = f"MYSQL_{env_name.upper().replace('-', '_')}_PWD"
+            os.environ[env_var] = str(params["password"])
+
+            self.base_command_mysql[env_name] = (
+                client_bin.split(" ")
+                + [
+                    "-u", params["username"],
+                    f"--password={os.getenv(env_var)}",
+                    "-h", params["host_address"],
+                    "-P", str(params["port"]),
+                ]
+            )
+
+            self.base_command_mysqldump[env_name] = (
+                dump_bin.split(" ")
+                + [
+                    "-u", params["username"],
+                    f"--password={os.getenv(env_var)}",
+                    "-h", params["host_address"],
+                    "-P", str(params["port"]),
+                    "-v",
+                    "--no-create-db",
+                    "--no-create-info",
+                    "--skip-lock-tables",
+                    "--single-transaction",
+                ]
+            )
 
     #-------------------------------------#
     # Method: Initialize the MySQL engine #
     #-------------------------------------#
-    def initiate_engine(self, server_name):
-
-        if server_name+'_env' not in settings['mysql']:
-            raise ValueError(
-                f'could not find the configuration for mysql server {server_name} in global config file.'
-            )
-        params = settings['mysql'][server_name+'_env']
+    def _create_engine(self, params):
         engine = SQLEngine(
             f'mysql+pymysql://{params["username"]}:{params["password"]}@{params["host_address"]}:{params["port"]}/',
             pool_pre_ping=True
@@ -451,15 +441,26 @@ class GraphDB():
             with dbapi_conn.cursor() as cur:
                 cur.execute("SET SESSION sql_mode = 'STRICT_TRANS_TABLES,NO_ENGINE_SUBSTITUTION'")
 
-        return params, engine
+        return engine
+
+    def initiate_engine(self, server_name):
+        if server_name not in self.params:
+            available = ", ".join(sorted(self.params.keys()))
+            raise ValueError(
+                f"could not find configuration for mysql server '{server_name}'. "
+                f"Available environments: [{available}]"
+            )
+        return self.params[server_name], self.engine[server_name]
 
     #-------------------------------#
     # Method: Test MySQL connection #
     #-------------------------------#
-    def test(self, engine_name='xaas_coresrv'):
+    def test(self, engine_name=None):
         """
         Test the MySQL connection by executing a simple query.
         """
+        if engine_name is None:
+            engine_name = self.default_engine_name
         try:
             connection = self.engine[engine_name].connect()
             result = connection.execute(text("SELECT 1")).fetchone()
@@ -1377,13 +1378,17 @@ class GraphDB():
     # Method: Print list of tables in the cache    #
     #----------------------------------------------#
     def print_tables_in_cache(self):
-        self.print_tables_in_schema(engine_name='xaas_coresrv', schema_name=settings['mysql']['schema_cache'])
+        if not self.config.schema_cache:
+            raise GraphDBConfigError("Missing config key: schema_cache")
+        self.print_tables_in_schema(engine_name=self.default_engine_name, schema_name=self.config.schema_cache)
 
     #----------------------------------------------#
     # Method: Print list of tables in the test     #
     #----------------------------------------------#
     def print_tables_in_test(self):
-        self.print_tables_in_schema(engine_name='xaas_coresrv', schema_name=settings['mysql']['schema_test'])
+        if not self.config.schema_test:
+            raise GraphDBConfigError("Missing config key: schema_test")
+        self.print_tables_in_schema(engine_name=self.default_engine_name, schema_name=self.config.schema_test)
 
     #-------------------------------------------------#
     # Method: Apply data types to a table (from JSON) #
@@ -1492,7 +1497,8 @@ class GraphDB():
     #----------------------------------------------#
     # Method: Materialise a view to the cache      #
     #----------------------------------------------#
-    def materialise_view(self, source_schema, source_view, target_schema, target_table, drop_table=False, use_replace=False, auto_increment_column=False, datatypes_json=False, keys_json=False, display_elapsed_time=False, estimated_num_rows=False, verbose=False):
+    def materialise_view(self, source_schema, source_view, target_schema, target_table, drop_table=False, use_replace=False, auto_increment_column=False, datatypes_json=False, keys_json=False, display_elapsed_time=False, estimated_num_rows=False, verbose=False, engine_name=None):
+        engine_name = engine_name or self.default_engine_name
 
         # Display processing time estimate
         if estimated_num_rows:
@@ -1511,20 +1517,20 @@ class GraphDB():
 
         # Drop the target table if it exists
         if drop_table:
-            self.execute_query(engine_name='xaas_coresrv', query=f"DROP TABLE IF EXISTS {target_schema}.{target_table}")
+            self.execute_query(engine_name=engine_name, query=f"DROP TABLE IF EXISTS {target_schema}.{target_table}")
 
         # If use_replace, set the REPLACE statement
         insert_or_replace_statement = 'REPLACE' if use_replace else 'INSERT'
-        
+
         # Create the target table
-        self.execute_query(engine_name='xaas_coresrv', query=f"CREATE TABLE IF NOT EXISTS {target_schema}.{target_table} AS SELECT * FROM {source_schema}.{source_view} WHERE 1=0")
+        self.execute_query(engine_name=engine_name, query=f"CREATE TABLE IF NOT EXISTS {target_schema}.{target_table} AS SELECT * FROM {source_schema}.{source_view} WHERE 1=0")
 
         # Set auto increment column
         if auto_increment_column:
-            self.execute_query(engine_name='xaas_coresrv', query=f"ALTER TABLE {target_schema}.{target_table} MODIFY COLUMN row_id INT AUTO_INCREMENT UNIQUE KEY")
+            self.execute_query(engine_name=engine_name, query=f"ALTER TABLE {target_schema}.{target_table} MODIFY COLUMN row_id INT AUTO_INCREMENT UNIQUE KEY")
 
         # Populate the target table
-        self.execute_query_in_shell(engine_name='xaas_coresrv', query=f"{insert_or_replace_statement} INTO {target_schema}.{target_table} SELECT * FROM {source_schema}.{source_view}")
+        self.execute_query_in_shell(engine_name=engine_name, query=f"{insert_or_replace_statement} INTO {target_schema}.{target_table} SELECT * FROM {source_schema}.{source_view}")
 
         # Print the elapsed time
         if display_elapsed_time:
@@ -1534,13 +1540,13 @@ class GraphDB():
         if datatypes_json:
             if verbose:
                 sysmsg.info(f"Applying datatypes to {target_schema}.{target_table} ...")
-            self.apply_datatypes(engine_name='xaas_coresrv', schema_name=target_schema, table_name=target_table, datatypes_json=datatypes_json, display_elapsed_time=display_elapsed_time, estimated_num_rows=estimated_num_rows)
+            self.apply_datatypes(engine_name=engine_name, schema_name=target_schema, table_name=target_table, datatypes_json=datatypes_json, display_elapsed_time=display_elapsed_time, estimated_num_rows=estimated_num_rows)
 
         # Create keys JSON
         if keys_json:
             if verbose:
                 sysmsg.info(f"Applying keys to {target_schema}.{target_table} ...")
-            self.apply_keys(engine_name='xaas_coresrv', schema_name=target_schema, table_name=target_table, keys_json=keys_json, display_elapsed_time=display_elapsed_time, estimated_num_rows=estimated_num_rows)
+            self.apply_keys(engine_name=engine_name, schema_name=target_schema, table_name=target_table, keys_json=keys_json, display_elapsed_time=display_elapsed_time, estimated_num_rows=estimated_num_rows)
 
     #----------------------------------------------#
     # Method: Materialise a view to the cache      #
@@ -1548,7 +1554,7 @@ class GraphDB():
     def update_table_from_view(self, engine_name, source_schema, source_view, target_schema, target_table, verbose=False):
 
         # Fetch list of columns in the source view
-        source_columns = self.get_column_names(engine_name='xaas_coresrv', schema_name=source_schema, table_name=source_view)
+        source_columns = self.get_column_names(engine_name=engine_name, schema_name=source_schema, table_name=source_view)
         
         # Generate the SQL query
         SQLQuery = f"REPLACE INTO {target_schema}.{target_table} ({', '.join(source_columns)}) SELECT * FROM {source_schema}.{source_view};"
@@ -1558,7 +1564,7 @@ class GraphDB():
             sysmsg.info(f"Updating table '{target_table}' from view '{source_view}' ...")
 
         # Execute the query
-        self.execute_query_in_shell(engine_name='xaas_coresrv', query=f"REPLACE INTO {target_schema}.{target_table} ({', '.join(source_columns)}) SELECT * FROM {source_schema}.{source_view}")
+        self.execute_query_in_shell(engine_name=engine_name, query=f"REPLACE INTO {target_schema}.{target_table} ({', '.join(source_columns)}) SELECT * FROM {source_schema}.{source_view}")
 
         # Print status
         if verbose:
@@ -1971,7 +1977,7 @@ class GraphDB():
         md5_hash = hashlib.md5(str(source_engine_name+source_schema_name+target_engine_name+target_schema_name+table_name+filter_by+str(chunk_size)+str(create_keys_after_import)).encode()).hexdigest()[:8]
 
         # Generate the full folder path for temporary export
-        temp_output_path = os.path.join(settings['mysql']['data_path']['export'], current_date, md5_hash)
+        temp_output_path = os.path.join(self.config.export_root(), current_date, md5_hash)
 
         # Print parameters
         sysmsg.trace(f"Temporary folder: {temp_output_path}")
@@ -2021,7 +2027,7 @@ class GraphDB():
         md5_hash = hashlib.md5(str(source_engine_name+source_schema_name+target_engine_name+target_schema_name+filter_by+str(chunk_size)+str(create_keys_after_import)).encode()).hexdigest()[:8]
 
         # Generate the full folder path for temporary export
-        temp_output_path = os.path.join(settings['mysql']['data_path']['export'], current_date, md5_hash)
+        temp_output_path = os.path.join(self.config.export_root(), current_date, md5_hash)
 
         # Print parameters
         sysmsg.trace(f"Temporary folder: {temp_output_path}")

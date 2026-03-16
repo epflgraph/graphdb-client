@@ -1,31 +1,8 @@
 # graphdb/cli/main.py
+# This is the main entry point for the GraphDB CLI application.
 import argparse
 from graphdb.cli.context  import CLIContext
 from graphdb.cli.register import register
-
-
-def _normalize_settings_for_graphdb(graphdb_module) -> None:
-    """
-    Backward-compatibility shim for config.yaml layouts.
-    """
-    if "mysql" in graphdb_module.settings:
-        return
-
-    settings = graphdb_module.settings
-    envs = settings.get("environments")
-    client_bin = settings.get("client_bin")
-    dump_bin = settings.get("dump_bin")
-
-    if not isinstance(envs, dict) or not client_bin:
-        return
-
-    graphdb_module.settings = {
-        "mysql": {
-            "client_bin": client_bin,
-            "dump_bin": dump_bin or "mysqldump",
-            **envs,
-        }
-    }
 
 #---------------------------------------------------------------------#
 # Function to build the main argument parser and register subcommands #
@@ -67,9 +44,6 @@ def main(argv=None) -> int:
     # Create shared DB context only for commands that need it
     if getattr(args, "requires_db", True):
         from graphdb.core.graphdb import GraphDB
-        import graphdb.core.graphdb as graphdb_module
-
-        _normalize_settings_for_graphdb(graphdb_module)
         db = GraphDB()
         args.ctx = CLIContext(db=db)
 

@@ -1,5 +1,7 @@
-# graphregistry/cli/specs.py
+# graphdb/cli/specs.py
+# This module defines the specifications for the CLI commands, including their arguments and handler functions.
 from typing import Any, Dict
+from graphdb.core.config import GraphDBConfig, GraphDBConfigError
 
 # Import all command handler functions
 from graphdb.cli.commands import (
@@ -11,14 +13,28 @@ from graphdb.cli.commands import (
     cmd_compare
 )
 
+def _load_cli_env_settings():
+    try:
+        cfg = GraphDBConfig.from_default_file()
+        envs = tuple(cfg.env_names())
+        default_env = cfg.default_env
+    except (GraphDBConfigError, OSError, ValueError):
+        envs = ('test',)
+        default_env = 'test'
+    return envs, default_env
+
+
+_CLI_ENVS, _CLI_DEFAULT_ENV = _load_cli_env_settings()
+_CLI_SECOND_ENV = _CLI_ENVS[1] if len(_CLI_ENVS) > 1 else _CLI_DEFAULT_ENV
+
 # Global common arguments
 global_common_args = {
     'env' : dict(
         flags = ('--env',),
         kwargs = dict(
-            help = "Specify environment (default=test).",
-            choices = ('test', 'prod', 'xaas_prod', 'xaas_coresrv'),
-            default = 'test'
+            help = "Specify environment.",
+            choices = _CLI_ENVS,
+            default = _CLI_DEFAULT_ENV
         )
     )
 }
@@ -27,10 +43,6 @@ global_common_args = {
 # CLI Definitions for all Subcommands and Arguments #
 #===================================================#
 cli_definitions: Dict[str, Any] = {
-
-    #---------------------#
-    # Command: config     #
-    #---------------------#
     'config' : dict(
         help = "Inspect and validate Registry configuration files.",
         common_args = {},
@@ -95,8 +107,8 @@ cli_definitions: Dict[str, Any] = {
         common_args = {},
         func = cmd_copy,
         args = [
-            dict(flags = ('--from_env'   ,), kwargs = dict(required=False, type=str, default='xaas_coresrv', help="Source environment.")),
-            dict(flags = ('--to_env'     ,), kwargs = dict(required=False, type=str, default='xaas_prod',    help="Target environment.")),
+            dict(flags = ('--from_env'   ,), kwargs = dict(required=False, type=str, choices=_CLI_ENVS, default=_CLI_DEFAULT_ENV, help="Source environment.")),
+            dict(flags = ('--to_env'     ,), kwargs = dict(required=False, type=str, choices=_CLI_ENVS, default=_CLI_SECOND_ENV,  help="Target environment.")),
             dict(flags = ('--from_schema',), kwargs = dict(required=True,  type=str, help="Name of the source database/schema to copy from.")),
             dict(flags = ('--to_schema'  ,), kwargs = dict(required=True,  type=str, help="Name of the target database/schema to copy to.")),
             dict(flags = ('--table_name' ,), kwargs = dict(required=False, type=str, default=None,    help="Name of the table to export (optional).")),
@@ -110,8 +122,8 @@ cli_definitions: Dict[str, Any] = {
         common_args = {},
         func = cmd_compare,
         args = [
-            dict(flags = ('--from_env'   ,), kwargs = dict(required=False, type=str, default='xaas_coresrv', help="Source environment.")),
-            dict(flags = ('--to_env'     ,), kwargs = dict(required=False, type=str, default='xaas_prod',    help="Target environment.")),
+            dict(flags = ('--from_env'   ,), kwargs = dict(required=False, type=str, choices=_CLI_ENVS, default=_CLI_DEFAULT_ENV, help="Source environment.")),
+            dict(flags = ('--to_env'     ,), kwargs = dict(required=False, type=str, choices=_CLI_ENVS, default=_CLI_SECOND_ENV,  help="Target environment.")),
             dict(flags = ('--from_schema',), kwargs = dict(required=True,  type=str, help="Name of the source database/schema to compare.")),
             dict(flags = ('--to_schema'  ,), kwargs = dict(required=True,  type=str, help="Name of the target database/schema to compare.")),
             dict(flags = ('--table_name' ,), kwargs = dict(required=False, type=str, default=None, help="Name of the table to compare (if comparing only one table).")),
