@@ -68,7 +68,7 @@ source ~/.zshrc
 ```
 Test with:
 ```bash
-graphdb test --env test
+graphdb test --env <environment_name>
 ```
 
 ### 👨🏻‍💻 Local installation
