@@ -25,36 +25,78 @@ Graph DB Client
 ===============
 *Graph DB Client* is a Python-based command-line interface (CLI) tool designed to facilitate the management and interaction with the Graph Data Platform's underlying MySQL database. It provides a unified interface for performing various database operations, including configuration management, data import/export, and server administration tasks. The CLI is built using Python's `argparse` library, allowing users to execute commands in a structured and intuitive manner.
 
+Configuration
+=============
+The CLI expects a `config.yaml` file (repository root format) describing database environments and MySQL binaries. Use the provided `config.example.yaml` as a template to create your own configuration.
+
 Installation
 ============
+
+### 🐳 Deploy with Docker
+The Graph DB Client is available as a Docker image, which provides a convenient way to run the CLI without needing to set up a local Python environment. The image includes all necessary dependencies and can be easily updated by pulling the latest version from Docker Hub.
+
+Steps to deploy with Docker:
+
+1. Pull the image:
+    ```bash
+    docker pull epflgraph/graphdb-client:latest
+    ```
+
+2. Run the CLI help:
+    ```bash
+    docker run --rm epflgraph/graphdb-client:latest -h
+    ```
+
+3. Run with your local configuration mounted (recommended):
+    ```bash
+    docker run --rm \
+    -v "$(pwd)/config.yaml:/app/config.yaml:ro" \
+    epflgraph/graphdb-client:latest test --env test
+    ```
+
+To run commands as `graphdb [cmd]`, add this to your `~/.zshrc` file:
+```
+graphdb() {
+  docker run --rm \
+    -v "$PWD/config.yaml:/app/config.yaml:ro" \
+    epflgraph/graphdb-client:latest "$@"
+}
+```
+Then reload your shell:
+```bash
+source ~/.zshrc
+```
+Test with:
+```bash
+graphdb test --env test
+```
+
+### 👨🏻‍💻 Local installation
+For users who prefer to run the CLI directly on their local machine, follow these steps to set up a Python virtual environment and install the package:
+
 1. Clone the repository:
    ```bash
    git clone https://github.com/epflgraph/graphdb-client.git
    cd graphdb-client
    ```
+
 2. Create and activate a virtual environment:
    ```bash
    python3 -m venv .venv.graphdb
    source .venv.graphdb/bin/activate
    ```
+
 3. Install the package:
    ```bash
    pip install .
    ```
+
 4. Verify installation:
    ```bash
    graphdb -h
    ```
 
-Configuration
-=============
-The CLI expects a `config.yaml` file (repository root format) describing database environments and MySQL binaries. Use the provided `config.example.yaml` as a template to create your own configuration.
-
-Usage
-=====
-The CLI supports several subcommands for different operations. Run `graphdb -h` to see the available commands and their descriptions.
-
-To test the connection to a database environment:
-```bash
-graphdb test --env <environment_name>
-```
+5. To test the connection to a database environment:
+    ```bash
+    graphdb test --env <environment_name>
+    ```
