@@ -210,3 +210,5 @@ __marimo__/
 .DS_Store
 .venv*
 config.yaml
+docker-publish.sh
+docker-build.sh
