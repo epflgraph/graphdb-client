@@ -2,7 +2,30 @@
 import argparse
 from graphdb.cli.context  import CLIContext
 from graphdb.cli.register import register
-from graphdb.core.graphdb import GraphDB
+
+
+def _normalize_settings_for_graphdb(graphdb_module) -> None:
+    """
+    Backward-compatibility shim for config.yaml layouts.
+    """
+    if "mysql" in graphdb_module.settings:
+        return
+
+    settings = graphdb_module.settings
+    envs = settings.get("environments")
+    client_bin = settings.get("client_bin")
+    dump_bin = settings.get("dump_bin")
+
+    if not isinstance(envs, dict) or not client_bin:
+        return
+
+    graphdb_module.settings = {
+        "mysql": {
+            "client_bin": client_bin,
+            "dump_bin": dump_bin or "mysqldump",
+            **envs,
+        }
+    }
 
 #---------------------------------------------------------------------#
 # Function to build the main argument parser and register subcommands #
@@ -19,7 +42,7 @@ def build_parser() -> argparse.ArgumentParser:
     subparsers = parser.add_subparsers(dest="domain", required=True)
 
     # Register commands for each domain
-    for cmd_name in ['test', 'config', 'export', 'import', 'copy', 'compare']:
+    for cmd_name in ['config', 'test', 'export', 'import', 'copy', 'compare']:
         register(subparsers, cmd_name)
 
     # Return the fully built parser
@@ -41,14 +64,14 @@ def main(argv=None) -> int:
         parser.print_help()
         return 1
 
-    # 🔑 Create shared context once
-    db = GraphDB()
+    # Create shared DB context only for commands that need it
+    if getattr(args, "requires_db", True):
+        from graphdb.core.graphdb import GraphDB
+        import graphdb.core.graphdb as graphdb_module
 
-    # Create CLI context
-    ctx = CLIContext(db = db)
-
-    # Attach to args for all subcommands
-    args.ctx = ctx
+        _normalize_settings_for_graphdb(graphdb_module)
+        db = GraphDB()
+        args.ctx = CLIContext(db=db)
 
     # Execute the command function and return its exit code
     return args.func(args) or 0

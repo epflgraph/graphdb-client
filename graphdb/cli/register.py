@@ -12,35 +12,42 @@ def register(subparsers, cmd_name):
       graphdb {cmd_name} [-h|...]
     """
 
+    spec = cli_definitions[cmd_name]
+
     # Register Level 1 parser
     # >> graphdb cmd_name [-h|...]
-    parser = subparsers.add_parser(cmd_name, help=cli_definitions[cmd_name]['help'])
+    parser = subparsers.add_parser(cmd_name, help=spec['help'])
 
-    # Register Level 2 parser
-    # >> graphdb cmd_name cmd [-h|...]
-    subcmd_cmd_name = parser.add_subparsers(dest=f"{cmd_name}_cmd", metavar="<command>", required=True,
-        help=f"<{cmd_name}> subcommands. Use \"graphdb {cmd_name} <command> -h\" for options.")
+    # Nested command (e.g., graphdb config index)
+    if 'commands' in spec:
+        subcmd_cmd_name = parser.add_subparsers(dest=f"{cmd_name}_cmd", metavar="<command>", required=True,
+            help=f"<{cmd_name}> subcommands. Use \"graphdb {cmd_name} <command> -h\" for options.")
 
-    # Initialize dictionary to hold subcommand parsers
-    subcommands = {}
+        for name, sub_spec in spec['commands'].items():
+            p = subcmd_cmd_name.add_parser(name, help=sub_spec['help'])
 
-    #-----------------------------------------#
-    # Iterate over commands and register them #
-    #-----------------------------------------#
-    for name, spec in cli_definitions[cmd_name]['commands'].items():
+            for arg_name in sub_spec.get('common_args', []):
+                arg = spec['common_args'][arg_name]
+                p.add_argument(*arg['flags'], **arg['kwargs'])
 
-        # Create subcommand parser
-        p = subcmd_cmd_name.add_parser(name, help=spec['help'])
+            for arg in sub_spec.get('args', []):
+                p.add_argument(*arg['flags'], **arg['kwargs'])
 
-        # Add common args
-        for arg_name in spec.get('common_args', []):
-            arg = cli_definitions[cmd_name]['common_args'][arg_name]
-            p.add_argument(*arg['flags'], **arg['kwargs'])
+            p.set_defaults(
+                func=sub_spec['func'],
+                requires_db=sub_spec.get('requires_db', True),
+            )
+        return
 
-        # Add command-specific args
-        for arg in spec.get('args', []):
-            p.add_argument(*arg['flags'], **arg['kwargs'])
+    # Flat command (e.g., graphdb test)
+    for arg_name in spec.get('common_args_order', []):
+        arg = spec['common_args'][arg_name]
+        parser.add_argument(*arg['flags'], **arg['kwargs'])
 
-        # Set command handler
-        p.set_defaults(func=spec['func'])
-        subcommands[name] = p
+    for arg in spec.get('args', []):
+        parser.add_argument(*arg['flags'], **arg['kwargs'])
+
+    parser.set_defaults(
+        func=spec['func'],
+        requires_db=spec.get('requires_db', True),
+    )

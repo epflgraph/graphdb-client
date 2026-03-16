@@ -1,5 +1,41 @@
 # graphregistry/cli/cmd_db.py
 # Manage MySQL/MariaDB server operations.
+import json
+from pathlib import Path
+
+from yaml import safe_load
+
+
+#-------------------------------------#
+# Handler: Print index configuration  #
+#-------------------------------------#
+def cmd_config_index(args):
+    """
+    Usage:
+        graphdb config index
+    """
+
+    # Print headers
+    print("🖥️  ~ Graph Registry CLI. Print out index config.")
+
+    config_path = Path(__file__).resolve().parents[2] / "config.yaml"
+    with open(config_path, "r", encoding="utf-8") as f:
+        config = safe_load(f) or {}
+
+    def _redact(data):
+        if isinstance(data, dict):
+            return {
+                key: ("***REDACTED***" if "password" in key.lower() else _redact(value))
+                for key, value in data.items()
+            }
+        if isinstance(data, list):
+            return [_redact(item) for item in data]
+        return data
+
+    print(json.dumps(_redact(config), indent=2, sort_keys=True))
+
+    # Print footers
+    print("🖥️  ~ Done.")
 
 #-----------------------------------#
 # Handler: Test server connectivity #
