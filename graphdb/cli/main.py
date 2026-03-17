@@ -19,7 +19,7 @@ def build_parser() -> argparse.ArgumentParser:
     subparsers = parser.add_subparsers(dest="domain", required=True)
 
     # Register commands for each domain
-    for cmd_name in ['config', 'test', 'export', 'import', 'copy', 'compare']:
+    for cmd_name in ['config', 'test', 'inspect', 'export', 'import', 'copy', 'compare']:
         register(subparsers, cmd_name)
 
     # Return the fully built parser

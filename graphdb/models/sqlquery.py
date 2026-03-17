@@ -103,6 +103,7 @@ class SQLQuery(BaseModel):
     show_header : bool            = Field(default=True,       description="Render title rule.")
     box_style   : BoxStyle        = Field(default="minimal",  description="Panel box style.")
     copyable    : bool            = Field(default=False,      description="Print plain aligned SQL if True.")
+    redact_params: bool           = Field(default=True,       description="Redact sensitive values in displayed params.")
     commands    : tuple[str, ...] = Field(default=DEFAULT_SQL_COMMANDS, description="Keywords used for alignment.")
     row_count   : int      | None = Field(default=None, ge=0, description="Number of rows returned/affected.")
     error       : str      | None = Field(default=None,       description="Last execution error, if any.")
@@ -256,8 +257,9 @@ class SQLQuery(BaseModel):
             meta.append("  rows=", style="dim")
             meta.append(str(self.row_count), style="bold cyan")
         if self.params is not None:
+            params_for_display = self.redacted_params() if self.redact_params else self.params
             meta.append("  params=", style="dim")
-            meta.append(repr(self.params), style="yellow")
+            meta.append(repr(params_for_display), style="yellow")
         if include_debug:
             meta.append("  qid=", style="dim")
             meta.append(self.query_id[:8], style="bold blue")
@@ -281,8 +283,9 @@ class SQLQuery(BaseModel):
 
     # Generate a Rich Panel containing the SQL syntax and metadata, with styling based on the box_style and show_header options.
     def panel(self, *, include_debug: bool = False) -> Panel:
+        meta = self.meta_text(include_debug=include_debug)
         return Panel(
-            Group(self.syntax(), self.meta_text(include_debug=include_debug) if self.meta_text(include_debug=include_debug).plain else Text()),
+            Group(self.syntax(), meta if meta.plain else Text()),
             border_style="bright_cyan",
             box=_BOX_MAP[self.box_style],
             padding=(1, 2),
@@ -353,5 +356,6 @@ def print_sql(sql: str, *, params: Any = None, elapsed_ms: float | None = None, 
         show_header=show_header,
         box_style=box_style,
         copyable=copyable,
+        redact_params=True,
         theme=theme,
     ).print(console=console)
