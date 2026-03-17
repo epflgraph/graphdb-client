@@ -774,11 +774,11 @@ class GraphDB():
                     pass
                 else:
                     print(f"Error message from MySQL:\n{result.stderr.strip()}\n")
-                    sysmsg.critical(f"Failed to execute query.")
+                    sysmsg.critical(f"Failed to execute query{f' [{query_id}]' if query_id else ''}.")
                     exit()
             else:
                 print("\033[91m‼️ Unknown error occurred.\033[0m\n")
-                sysmsg.critical(f"Failed to execute query.")
+                sysmsg.critical(f"Failed to execute query{f' [{query_id}]' if query_id else ''}.")
                 exit()
 
         # Return the result
