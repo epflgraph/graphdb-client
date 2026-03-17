@@ -8,6 +8,7 @@ from tqdm import tqdm
 from pathlib import Path
 import numpy as np
 import pandas as pd
+from tabulate import tabulate
 import sys, os, re, subprocess, json, datetime, hashlib, random, glob, time, rich
 from graphdb.core.config import GraphDBConfig, GraphDBConfigError
 from graphdb.models.sqlquery import print_sql
