@@ -59,6 +59,7 @@ DEFAULT_SQL_COMMANDS: tuple[str, ...] = (
     "OR",
     "CAST",
     "AVG",
+    "COALESCE",
     "row_number()",
     "UNIQUE KEY",
     "PRIMARY KEY",
@@ -66,6 +67,7 @@ DEFAULT_SQL_COMMANDS: tuple[str, ...] = (
     "ENGINE",
     "(",
     ")",
+    "=",
 )
 
 # Mapping of box style names to Rich box objects for panel rendering.

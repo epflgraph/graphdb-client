@@ -82,7 +82,6 @@ def get_table_type_from_name(table_name):
     else:
         return None
 
-
 # Print in colour
 def print_colour(msg, colour='white', background='black', style='normal', display_method=False):
     colour_codes = {
@@ -133,7 +132,6 @@ def print_colour(msg, colour='white', background='black', style='normal', displa
             msg = f"{method}(): {msg}"
 
     print(f"\033[{style_codes[style]};{colour_codes[colour]};{background_codes[background]}m{msg}\033[0m")
-
 
 # Pretty-print dataframe
 def print_dataframe(df, title):
