@@ -51,7 +51,7 @@ Steps to deploy with Docker:
     ```bash
     docker run --rm \
     -v "$(pwd)/config.yaml:/app/config.yaml:ro" \
-    epflgraph/graphdb-client:latest test --env test
+    epflgraph/graphdb-client:latest test --env <env_name>
     ```
 
 To run commands as `graphdb [cmd]`, add this to your `~/.zshrc` file:
@@ -68,7 +68,7 @@ source ~/.zshrc
 ```
 Test with:
 ```bash
-graphdb test --env <environment_name>
+graphdb test --env <env_name>
 ```
 
 ### 👨🏻‍💻 Local installation
@@ -98,5 +98,5 @@ For users who prefer to run the CLI directly on their local machine, follow thes
 
 5. To test the connection to a database environment:
     ```bash
-    graphdb test --env <environment_name>
+    graphdb test --env <env_name>
     ```
