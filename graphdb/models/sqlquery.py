@@ -105,6 +105,7 @@ class SQLQuery(BaseModel):
     db          : str      | None = Field(default=None,       description="Database or engine name.")
     title       : str             = Field(default="SQL",      description="Render title.")
     theme       : str             = Field(default="monokai",  description="Rich theme for SQL syntax highlighting.")
+    word_wrap   : bool            = Field(default=True,       description="Wrap long SQL lines when rendering.")
     show_header : bool            = Field(default=True,       description="Render title rule.")
     box_style   : BoxStyle        = Field(default="minimal",  description="Panel box style.")
     copyable    : bool            = Field(default=False,      description="Print plain aligned SQL if True.")
@@ -282,7 +283,7 @@ class SQLQuery(BaseModel):
             "sql",
             theme=self.theme,
             line_numbers=False,
-            word_wrap=False,
+            word_wrap=self.word_wrap,
             background_color="black",
         )
 
@@ -348,7 +349,7 @@ class SQLQuery(BaseModel):
         return cls(query="\n".join(lines), title=title, **kwargs)
 
 # Compatibility wrapper for quick usage without needing to construct SQLQuery objects directly.
-def print_sql(sql: str, *, params: Any = None, elapsed_ms: float | None = None, db: str | None = None, title: str = "SQL", show_header: bool = True, box_style: BoxStyle = "minimal", copyable: bool = False, theme: str = "monokai", console: Console | None = None) -> None:
+def print_sql(sql: str, *, params: Any = None, elapsed_ms: float | None = None, db: str | None = None, title: str = "SQL", show_header: bool = True, box_style: BoxStyle = "minimal", copyable: bool = False, theme: str = "monokai", word_wrap: bool = True, console: Console | None = None) -> None:
     """
     Compatibility wrapper around SQLQuery for drop-in usage.
     """
@@ -363,4 +364,5 @@ def print_sql(sql: str, *, params: Any = None, elapsed_ms: float | None = None, 
         copyable=copyable,
         redact_params=True,
         theme=theme,
+        word_wrap=word_wrap,
     ).print(console=console)
