@@ -15,7 +15,7 @@ def cmd_config(args):
     """
 
     # Print headers
-    print("🖥️  ~ Graph Registry CLI. Print out config options.")
+    print("🖥️  ~ GraphDB client CLI. Print out config options.")
 
     config_path = Path(__file__).resolve().parents[2] / "config.yaml"
     with open(config_path, "r", encoding="utf-8") as f:
@@ -49,7 +49,7 @@ def cmd_test(args):
     db = args.ctx.db
 
     # Print headers
-    print("🖥️  ~ Graph Registry CLI. Test server connectivity.")
+    print("🖥️  ~ GraphDB client CLI. Test server connectivity.")
 
     # Execute command:
     # - Test connection to MySQL server
@@ -77,7 +77,7 @@ def cmd_inspect(args):
         graphdb execute [...]
     """
 
-    print("🖥️  ~ Graph Registry CLI. SQLQuery feature showcase.")
+    print("🖥️  ~ GraphDB client CLI. SQLQuery feature showcase.")
 
     # Build query either from raw SQL or from SELECT/FROM(/WHERE) parts.
     if args.query:
@@ -169,7 +169,7 @@ def cmd_export(args):
     db = args.ctx.db
 
     # Print headers
-    print("🖥️  ~ Graph Registry CLI. Export database into local folder.")
+    print("🖥️  ~ GraphDB client CLI. Export database into local folder.")
 
     # Get export options
     t = args.table_name is not None
@@ -240,7 +240,7 @@ def cmd_import(args):
     db = args.ctx.db
 
     # Print headers
-    print("🖥️  ~ Graph Registry CLI. Import database from local folder.")
+    print("🖥️  ~ GraphDB client CLI. Import database from local folder.")
 
     # Get import options
     t = args.table_name is not None
@@ -302,7 +302,7 @@ def cmd_copy(args):
     db = args.ctx.db
 
     # Print headers
-    print("🖥️  ~ Graph Registry CLI. Copy database or tables across servers.")
+    print("🖥️  ~ GraphDB client CLI. Copy database or tables across servers.")
 
     # Get import options
     t = args.table_name is not None
@@ -348,7 +348,7 @@ def cmd_compare(args):
     db = args.ctx.db
 
     # Print headers
-    print("🖥️  ~ Graph Registry CLI. Compare database or tables across servers.")
+    print("🖥️  ~ GraphDB client CLI. Compare database or tables across servers.")
 
     # Get import options
     t = args.table_name is not None

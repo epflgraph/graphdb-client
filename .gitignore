@@ -212,3 +212,6 @@ __marimo__/
 config.yaml
 docker-publish.sh
 docker-build.sh
+security_scan.sh
+.gitleaks.toml
+gitleaks_scan_report.json

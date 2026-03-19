@@ -1,7 +1,12 @@
-# Graph DB Client: Configuration
-client_bin: /usr/bin/docker run --rm mysql:8.0 mysql
-dump_bin: /usr/local/bin/mysqldump
+#=======================#
+# GraphDB Configuration #
+#=======================#
 
+# Client binaries
+client_bin: /usr/bin/docker run --rm mysql:8.0 mysql
+dump_bin:   /usr/bin/docker run --rm mysql:8.0 mysqldump
+
+# Database environments
 environments:
 
   # Environment: test
@@ -31,3 +36,6 @@ environments:
     port: ...
     username: ...
     password: ...
+
+# Default environment to use when not specified in the command line
+default_env: test_env
