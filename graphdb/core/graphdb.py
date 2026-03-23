@@ -947,7 +947,7 @@ class GraphDB():
                 for k in range(num_upd_columns):
                     eval_result = out[0][k]
                     eval_results.append({'column': upd_column_names[k], 'result': eval_result})
-                    print(f"{upd_column_names[k]} {'.'*(32-len(upd_column_names[k]))} ", end="", flush=True)
+                    print(f"{upd_column_names[k]} {'.'*(48-len(upd_column_names[k]))} ", end="", flush=True)
                     print_colour(eval_result, colour=colour_map[eval_result])
 
         # Generate the SQL query for commit
