@@ -926,8 +926,8 @@ class GraphDB():
             # Generate the SQL query for evaluation
             sql_query_eval = f"""
                 SELECT {sql_select_statement}
-                FROM {t}
-                WHERE ({', '.join(key_column_names)}) = (:{', :'.join(key_column_names)});
+                  FROM {t}
+                 WHERE ({', '.join(key_column_names)}) = (:{', :'.join(key_column_names)});
             """
 
             # Print the SQL query
@@ -972,7 +972,7 @@ class GraphDB():
                     )};"""
         else:
             sql_query_commit = f"""
-                INSERT INTO {t}
+                INSERT IGNORE INTO {t}
                     ({', '.join(key_column_names)})
                 SELECT
                     {', '.join([f':{key_column_names[k]} AS {key_column_names[k]}' for k in range(num_key_columns)])};"""
