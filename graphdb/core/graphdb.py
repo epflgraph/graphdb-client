@@ -941,7 +941,7 @@ class GraphDB():
             print_colour(f'\nChanges on table {t}:', style='bold')
             eval_result = 'key exists' if len(out) > 0 else 'key is new'
             eval_results = [{'column': 'primary_key', 'result': eval_result}]
-            print(f"primary_key {'.'*(32-len('primary_key'))} ", end="", flush=True)
+            print(f"primary_key {'.'*(48-len('primary_key'))} ", end="", flush=True)
             print_colour(eval_result, colour=colour_map[eval_result])
             if len(out) > 0:
                 for k in range(num_upd_columns):
