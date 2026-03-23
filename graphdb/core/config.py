@@ -50,6 +50,7 @@ class GraphDBConfig:
     default_env: str
     schema_cache: Optional[str] = None
     schema_test: Optional[str] = None
+    export_path: Optional[str] = None
     data_path: Optional[Dict[str, Any]] = None
 
     @classmethod
@@ -82,6 +83,7 @@ class GraphDBConfig:
         dump_bin = str(mysql_cfg.get("dump_bin", raw.get("dump_bin", "mysqldump")))
         schema_cache = mysql_cfg.get("schema_cache", raw.get("schema_cache"))
         schema_test = mysql_cfg.get("schema_test", raw.get("schema_test"))
+        export_path = mysql_cfg.get("export_path", raw.get("export_path"))
         data_path = mysql_cfg.get("data_path", raw.get("data_path"))
 
         environments: Dict[str, EnvironmentConfig] = {}
@@ -98,6 +100,7 @@ class GraphDBConfig:
             "default_env",
             "schema_cache",
             "schema_test",
+            "export_path",
             "data_path",
             "environments",
         }
@@ -131,6 +134,7 @@ class GraphDBConfig:
             default_env=default_env,
             schema_cache=schema_cache,
             schema_test=schema_test,
+            export_path=str(export_path) if export_path else None,
             data_path=data_path if isinstance(data_path, dict) else None,
         )
 
@@ -145,6 +149,10 @@ class GraphDBConfig:
         return self.environments[env_name]
 
     def export_root(self) -> str:
-        if not isinstance(self.data_path, dict) or "export" not in self.data_path:
-            raise GraphDBConfigError("Missing config path: data_path.export")
-        return str(self.data_path["export"])
+        if self.export_path:
+            return str(self.export_path)
+        if isinstance(self.data_path, dict) and self.data_path.get("export"):
+            return str(self.data_path["export"])
+        raise GraphDBConfigError(
+            "Missing config path for exports. Set either 'export_path' or 'data_path.export' in config.yaml"
+        )
