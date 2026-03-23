@@ -935,7 +935,7 @@ class GraphDB():
                 print(sql_query_eval)
 
             # Execute the query
-            out = db.execute_query(engine_name=engine_name, query=sql_query_eval, params=sql_params)
+            out = self.execute_query(engine_name=engine_name, query=sql_query_eval, params=sql_params)
 
             # Build up the test results dictionary
             print_colour(f'\nChanges on table {t}:', style='bold')
@@ -987,7 +987,7 @@ class GraphDB():
 
         # Execute commit
         if 'commit' in actions:
-            out = db.execute_query(engine_name='xaas_coresrv', query=sql_query_commit, params=sql_params, commit=True, return_exception=True)
+            out = self.execute_query(engine_name='xaas_coresrv', query=sql_query_commit, params=sql_params, commit=True, return_exception=True)
             if not type(out) is list:
                 error_type, error_msg, dbapi_code = out
                 if dbapi_code==1062: # Duplicate entry
