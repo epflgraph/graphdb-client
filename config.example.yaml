@@ -6,36 +6,39 @@
 client_bin: /usr/bin/docker run --rm mysql:8.0 mysql
 dump_bin:   /usr/bin/docker run --rm mysql:8.0 mysqldump
 
+# Data export path
+export_path: /path/to/export/folder
+
 # Database environments
 environments:
 
   # Environment: test
   test_env:
-    host_address: ...
-    port: ...
-    username: ...
-    password: ...
+    host_address: 0.0.0.0
+    port: 3306
+    username: something
+    password: something
 
   # Environment: staging
   stag_env:
-    host_address: ...
-    port: ...
-    username: ...
-    password: ...
+    host_address: 0.0.0.0
+    port: 3307
+    username: something
+    password: something
 
   # Environment: production
   prod_env:
-    host_address: ...
-    port: ...
-    username: ...
-    password: ...
+    host_address: 0.0.0.0
+    port: 3308
+    username: something
+    password: something
 
   # Environment: some other
   some_other_env:
-    host_address: ...
-    port: ...
-    username: ...
-    password: ...
+    host_address: 0.0.0.0
+    port: 3309
+    username: something
+    password: something
 
 # Default environment to use when not specified in the command line
 default_env: test_env
