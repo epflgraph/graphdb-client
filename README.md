@@ -38,8 +38,8 @@ Some managed or production MySQL servers enforce secure transport (`--require_se
   test_env:
     host_address: 0.0.0.0
     port: 3306
-    username: something
-    password: something
+    username: <YOUR_USERNAME>
+    password: <YOUR_PASSWORD>
     ssl:
       ca: /etc/ssl/cert.pem
       mode: REQUIRED
