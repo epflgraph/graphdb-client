@@ -10,7 +10,7 @@ from pathlib import Path
 import numpy as np
 import pandas as pd
 from tabulate import tabulate
-import sys, os, re, subprocess, json, datetime, hashlib, random, glob, time, rich
+import sys, os, re, subprocess, json, datetime, hashlib, random, glob, time, rich, ssl
 from graphdb.core.config import GraphDBConfig, GraphDBConfigError
 from graphdb.models.sqlquery import print_sql
 
@@ -184,7 +184,9 @@ class GraphDB():
             env_var = f"MYSQL_{env_name.upper().replace('-', '_')}_PWD"
             os.environ[env_var] = str(params["password"])
 
-            self.base_command_mysql[env_name] = (
+            ssl_flags = self._build_ssl_cli_flags(params.get("ssl"))
+
+            mysql_cmd = (
                 client_bin.split(" ")
                 + [
                     "-u", params["username"],
@@ -193,29 +195,149 @@ class GraphDB():
                     "-P", str(params["port"]),
                 ]
             )
+            if ssl_flags:
+                mysql_cmd += ssl_flags
+            self.base_command_mysql[env_name] = mysql_cmd
 
-            self.base_command_mysqldump[env_name] = (
+            mysqldump_cmd = (
                 dump_bin.split(" ")
                 + [
                     "-u", params["username"],
                     f"--password={os.getenv(env_var)}",
                     "-h", params["host_address"],
                     "-P", str(params["port"]),
-                    "-v",
-                    "--no-create-db",
-                    "--no-create-info",
-                    "--skip-lock-tables",
-                    "--single-transaction",
                 ]
             )
+            if ssl_flags:
+                mysqldump_cmd += ssl_flags
+            mysqldump_cmd += [
+                "-v",
+                "--no-create-db",
+                "--no-create-info",
+                "--skip-lock-tables",
+                "--single-transaction",
+            ]
+            self.base_command_mysqldump[env_name] = mysqldump_cmd
+
+    #-------------------------------#
+    # SSL helpers                   #
+    #-------------------------------#
+    @staticmethod
+    def _normalize_ssl_options(raw_ssl):
+        if not isinstance(raw_ssl, dict):
+            return {}
+        normalized = {}
+        for key, value in raw_ssl.items():
+            if not isinstance(key, str):
+                continue
+            normalized[key.lower().replace('-', '_')] = value
+        return normalized
+
+    @classmethod
+    @staticmethod
+    def _parse_bool(value):
+        if isinstance(value, bool):
+            return value
+        if isinstance(value, str):
+            normalized_value = value.strip().lower()
+            if normalized_value in {"1", "true", "yes", "on"}:
+                return True
+            if normalized_value in {"0", "false", "no", "off"}:
+                return False
+        return None
+
+    @classmethod
+    def _build_ssl_connect_args(cls, ssl_options):
+        normalized = cls._normalize_ssl_options(ssl_options)
+        if not normalized:
+            return {}
+
+        connect_args: Dict[str, Any] = {}
+
+        # Map certificate/credential options
+        for key, value in normalized.items():
+            if key in {"mode", "ssl_mode", "verify_server_cert", "ssl_verify_server_cert"}:
+                continue
+            if value is None:
+                continue
+            target_key = key[4:] if key.startswith("ssl_") else key
+            connect_args[target_key] = value
+
+        # Handle verification toggles
+        verify_value = None
+        for verify_key in ("verify_server_cert", "ssl_verify_server_cert"):
+            if verify_key in normalized:
+                verify_value = normalized[verify_key]
+                break
+        verify_bool = cls._parse_bool(verify_value)
+
+        if verify_bool is False:
+            connect_args["cert_reqs"] = ssl.CERT_NONE
+            connect_args["check_hostname"] = False
+        elif verify_bool is True:
+            connect_args["cert_reqs"] = ssl.CERT_REQUIRED
+            connect_args["check_hostname"] = True
+        elif "ca" in connect_args or "cert" in connect_args or "key" in connect_args:
+            connect_args.setdefault("cert_reqs", ssl.CERT_REQUIRED)
+            connect_args.setdefault("check_hostname", True)
+
+        return connect_args
+
+    @classmethod
+    def _build_ssl_cli_flags(cls, ssl_options):
+        normalized = cls._normalize_ssl_options(ssl_options)
+        if not normalized:
+            return []
+
+        flags = []
+
+        mode_value = next(
+            (normalized[k] for k in ("mode", "ssl_mode") if k in normalized),
+            None,
+        )
+        mode_value = str(mode_value) if mode_value is not None else "REQUIRED"
+        flags.append(f"--ssl-mode={mode_value}")
+
+        def _pick(*keys):
+            for key in keys:
+                if key in normalized:
+                    return normalized[key]
+            return None
+
+        for opt_keys, cli_option in [
+            (("ca", "ssl_ca"), "--ssl-ca"),
+            (("cert", "ssl_cert"), "--ssl-cert"),
+            (("key", "ssl_key"), "--ssl-key"),
+            (("cipher", "ssl_cipher"), "--ssl-cipher"),
+        ]:
+            value = _pick(*opt_keys)
+            if value is not None:
+                flags.append(f"{cli_option}={value}")
+
+        verify_value = _pick("verify_server_cert", "ssl_verify_server_cert")
+        if verify_value is not None:
+            if isinstance(verify_value, bool):
+                if verify_value:
+                    flags.append("--ssl-verify-server-cert")
+                else:
+                    flags.append("--ssl-verify-server-cert=FALSE")
+            else:
+                flags.append(f"--ssl-verify-server-cert={verify_value}")
+
+        return flags
 
     #-------------------------------------#
     # Method: Initialize the MySQL engine #
     #-------------------------------------#
     def _create_engine(self, params):
+        ssl_connect_args = self._build_ssl_connect_args(params.get("ssl"))
+        engine_kwargs = {"pool_pre_ping": True}
+        if ssl_connect_args:
+            engine_kwargs["connect_args"] = {"ssl": ssl_connect_args}
+
         engine = SQLEngine(
             f'mysql+pymysql://{params["username"]}:{params["password"]}@{params["host_address"]}:{params["port"]}/',
-            pool_pre_ping=True
+            **engine_kwargs
         )
         @event.listens_for(engine, "connect")
         def set_sql_mode(dbapi_conn, _):

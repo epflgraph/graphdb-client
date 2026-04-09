@@ -17,6 +17,7 @@ class EnvironmentConfig:
     port: int
     username: str
     password: str
+    ssl: Optional[Dict[str, Any]] = None
 
     @classmethod
     def from_dict(cls, env_name: str, raw: Dict[str, Any]) -> "EnvironmentConfig":
@@ -26,11 +27,17 @@ class EnvironmentConfig:
             raise GraphDBConfigError(
                 f"Environment '{env_name}' missing required keys: {', '.join(missing)}"
             )
+        ssl_cfg = raw.get("ssl")
+        if ssl_cfg is not None and not isinstance(ssl_cfg, dict):
+            raise GraphDBConfigError(
+                f"Environment '{env_name}' ssl block must be a dictionary."
+            )
         return cls(
             host_address=str(raw["host_address"]),
             port=int(raw["port"]),
             username=str(raw["username"]),
             password=str(raw["password"]),
+            ssl=ssl_cfg,
         )
 
     def as_dict(self) -> Dict[str, Any]:
@@ -39,6 +46,7 @@ class EnvironmentConfig:
             "port": self.port,
             "username": self.username,
             "password": self.password,
+            "ssl": self.ssl,
         }
 
 
