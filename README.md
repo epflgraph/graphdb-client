@@ -30,6 +30,28 @@ Configuration
 =============
 The CLI expects a `config.yaml` file (repository root format) describing database environments and MySQL binaries. Use the provided `config.example.yaml` as a template to create your own configuration.
 
+Secure connections
+------------------
+Some managed or production MySQL servers enforce secure transport (`--require_secure_transport=ON`). When that happens, add an `ssl` block to each environment that needs TLS so the CLI can both open a secure SQLAlchemy session and pass the matching `mysql`/`mysqldump` flags. The block supports the same keywords that the MySQL client expects, for example:
+
+```yaml
+  test_env:
+    host_address: 0.0.0.0
+    port: 3306
+    username: something
+    password: something
+    ssl:
+      ca: /etc/ssl/cert.pem
+      mode: REQUIRED
+      verify_server_cert: true
+```
+
+- `ca`, `cert`, `key`, `cipher` and their `ssl_*` variants are forwarded to `mysql`/`mysqldump` as `--ssl-ca`, `--ssl-cert`, etc. They also populate the `ssl` dictionary that SQLAlchemy/PyMySQL uses when creating the `mysql+pymysql` engine.
+- `mode` (defaults to `REQUIRED` if you omit it) controls `--ssl-mode` for the shell clients.
+- `verify_server_cert: false` (or `true`) toggles the `--ssl-verify-server-cert` flag.
+
+With the TLS block in place, `graphdb test --env <env_name>` will speak TLS and stop raising the “insecure transport” error.
+
 Installation
 ============
 
