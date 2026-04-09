@@ -40,5 +40,16 @@ environments:
     username: something
     password: something
 
+  # Environment: secure host (requires TLS)
+  secure_env:
+    host_address: 0.0.0.0
+    port: 3310
+    username: something
+    password: something
+    ssl:
+      ca: /etc/ssl/cert.pem
+      mode: REQUIRED
+      verify_server_cert: true
+
 # Default environment to use when not specified in the command line
 default_env: test_env
