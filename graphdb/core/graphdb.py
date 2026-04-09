@@ -1024,6 +1024,28 @@ class GraphDB():
     #--------------------------------------------#
     # Method: Execute a single-row upsert safely #
     #--------------------------------------------#
+
+    # Helper: Normalize Python values for SQL
+    @staticmethod
+    def _normalize_sql_value(value):
+        if value is None:
+            return None
+
+        if isinstance(value, str):
+            stripped = value.strip()
+            if stripped in {"None", "NULL", "null", "NaN", "nan", ""}:
+                return None
+            return value
+
+        try:
+            if pd.isna(value):
+                return None
+        except Exception:
+            pass
+
+        return value
+
+    # Method: Execute a single-row upsert safely
     def execute_upsert_row(self, engine_name, schema_name, table_name, key_column_names, key_column_values, upd_column_names, upd_column_values, actions=()):
         """
         Possible actions: 'print', 'eval', 'commit'
@@ -1032,11 +1054,18 @@ class GraphDB():
         # Generate the full table name
         t = f'{schema_name}.{table_name}'
 
-        # Get the number of columns to update and create the dictionary with values
+        # Get the number of columns to update and create the dictionary with normalized values
         num_upd_columns = len(upd_column_names)
         num_key_columns = len(key_column_names)
-        sql_params = {key_column_names[k]: key_column_values[k] for k in range(num_key_columns)}
-        sql_params.update({upd_column_names[u]: upd_column_values[u] for u in range(num_upd_columns)})
+
+        sql_params = {
+            key_column_names[k]: self._normalize_sql_value(key_column_values[k])
+            for k in range(num_key_columns)
+        }
+        sql_params.update({
+            upd_column_names[u]: self._normalize_sql_value(upd_column_values[u])
+            for u in range(num_upd_columns)
+        })
 
         # Initialise test results dictionary
         eval_results = None
