@@ -285,24 +285,37 @@ class GraphDB():
 
     @classmethod
     def _build_ssl_cli_flags(cls, ssl_options):
+
         normalized = cls._normalize_ssl_options(ssl_options)
         if not normalized:
             return []
 
         flags = []
 
-        mode_value = next(
-            (normalized[k] for k in ("mode", "ssl_mode") if k in normalized),
-            None,
-        )
-        mode_value = str(mode_value) if mode_value is not None else "REQUIRED"
-        flags.append(f"--ssl-mode={mode_value}")
-
         def _pick(*keys):
             for key in keys:
                 if key in normalized:
                     return normalized[key]
             return None
+
+        mode_value = _pick("mode", "ssl_mode")
+        verify_value = _pick("verify_server_cert", "ssl_verify_server_cert")
+        verify_bool = cls._parse_bool(verify_value)
+
+        if mode_value is None:
+            if verify_bool is True:
+                mode_value = "VERIFY_IDENTITY"
+            elif verify_bool is False:
+                mode_value = "REQUIRED"
+            else:
+                mode_value = "REQUIRED"
+
+        mode_value = str(mode_value).strip().upper()
+        allowed_modes = {"DISABLED", "PREFERRED", "REQUIRED", "VERIFY_CA", "VERIFY_IDENTITY"}
+        if mode_value not in allowed_modes:
+            raise ValueError(f"Unsupported MySQL ssl mode: {mode_value}")
+
+        flags.append(f"--ssl-mode={mode_value}")
 
         for opt_keys, cli_option in [
             (("ca", "ssl_ca"), "--ssl-ca"),
@@ -313,16 +326,6 @@ class GraphDB():
             value = _pick(*opt_keys)
             if value is not None:
                 flags.append(f"{cli_option}={value}")
-
-        verify_value = _pick("verify_server_cert", "ssl_verify_server_cert")
-        if verify_value is not None:
-            if isinstance(verify_value, bool):
-                if verify_value:
-                    flags.append("--ssl-verify-server-cert")
-                else:
-                    flags.append("--ssl-verify-server-cert=FALSE")
-            else:
-                flags.append(f"--ssl-verify-server-cert={verify_value}")
 
         return flags
 
@@ -471,27 +474,30 @@ class GraphDB():
         # Return the row count
         return row_count
 
-    # #-------------------------------------#
-    # # Method: Get table definition        #
-    # #-------------------------------------#
-    # def get_create_table(self, engine_name, schema_name, table_name):
-    #     query = f"SHOW CREATE TABLE {schema_name}.{table_name}"
-    #     return self.execute_query(engine_name=engine_name, query=query)[0][1]
-
+    # Helper method to safely quote identifiers (e.g. database, table, column names) with backticks
     def _q(self, name: str) -> str:
         """Backtick-quote an identifier safely (handles dots separately elsewhere)."""
         return f"`{name.replace('`', '``')}`"
 
+    #------------------------------------------------#
+    # Method: Get CREATE TABLE statement for a table #
+    #------------------------------------------------#
     def get_create_table(self, engine_name, schema_name, table_name):
         # Always quote, otherwise names with hyphens/reserved words break
         query = f"SHOW CREATE TABLE {self._q(schema_name)}.{self._q(table_name)}"
         return self.execute_query(engine_name=engine_name, query=query)[0][1]
 
+    #----------------------------------------------#
+    # Method: Get CREATE VIEW statement for a view #
+    #----------------------------------------------#
     def get_create_view(self, engine_name, schema_name, view_name):
         query = f"SHOW CREATE VIEW {self._q(schema_name)}.{self._q(view_name)}"
         # Result columns include "Create View" at index 1
         return self.execute_query(engine_name=engine_name, query=query)[0][1]
 
+    #------------------------------------#
+    # Method: Check if a table is a view #
+    #------------------------------------#
     def is_view(self, engine_name, schema_name, name) -> bool:
         q = f"""
             SELECT TABLE_TYPE
@@ -585,7 +591,6 @@ class GraphDB():
                 keys[key_name] = []
             keys[key_name].append(r[4])
         return keys
-
 
     #===============================================#
     # Method Group: Various query execution methods #
@@ -924,30 +929,41 @@ class GraphDB():
             print(f"SQL file does not exist: {abs_file_path}")
             return False
 
-        # Define the shell command
+        # Define the shell command for execution, ensuring we don't include -e/--execute to allow for stdin execution
         shell_command = list(self.base_command_mysql[engine_name])
 
-        # Guard against a configured command that already forces mysql to use -e
+        # Warn if command already contains -e/--execute, as this would conflict with stdin execution
         if '-e' in shell_command or '--execute' in shell_command:
             print("Configured mysql command already contains -e/--execute, so stdin SQL will be ignored.")
             print(f"Command: {shell_command}")
             return False
 
-        # Add the database to the command if specified
+        # If a database is specified, add it to the command (after connection parameters but before execution parameters)
         if database:
             shell_command.append(database)
 
-        # If verbose is enabled, print the command being executed
+        # If verbose is enabled, add the flag to show warnings in the mysql command output
         if verbose:
-            shell_command.append('-v')
+            shell_command += ["--show-warnings"]
 
-        # Run the command and capture stdout and stderr
+        # Read the SQL file content and execute it via subprocess, passing the SQL text through stdin
         try:
+
             # Read the SQL file content
-            with open(abs_file_path, 'r', encoding='utf-8') as sql_file:
+            with open(abs_file_path, "r", encoding="utf-8") as sql_file:
                 sql_text = sql_file.read()
 
-            # Execute the SQL command using subprocess, passing the SQL text via stdin
+            # Check if there's an actual SQL command in file content
+            # If not, issue warning and return
+            if not sql_text.strip():
+                print(f"⚠️  SQL file is empty: {abs_file_path}")
+                return False
+
+            # If verbose, print the SQL text being executed
+            if verbose:
+                print_sql(sql_text)
+
+            # Execute the SQL command via subprocess, passing the SQL text through stdin
             result = subprocess.run(
                 shell_command,
                 input=sql_text,
@@ -956,35 +972,53 @@ class GraphDB():
                 text=True
             )
 
-        # Handle file reading and subprocess exceptions
+        # Handle file reading errors and subprocess execution errors separately for clearer diagnostics
         except OSError as exc:
             print(f"Failed to open SQL file: {abs_file_path}")
             print(str(exc))
             return False
 
-        # broad exception catch to handle any unexpected errors during subprocess execution
+        # Note: subprocess.run can raise a CalledProcessError if the command returns a non-zero exit status and check=True is used, but since we're not using check=True, it will not raise an exception for non-zero exit codes. However, it can still raise exceptions for other issues (e.g., if the mysql command is not found), which we catch here.
         except Exception as exc:
             print(f"Failed to execute mysql command for file: {abs_file_path}")
             print(str(exc))
             return False
 
-        # Filter out the password warning
-        warn = 'mysql: [Warning] Using a password on the command line interface can be insecure.'
+        # Process the result and handle stderr, ignoring the common password warning
+        warn = "mysql: [Warning] Using a password on the command line interface can be insecure."
         stderr_lines = [
             line for line in result.stderr.splitlines()
             if line.strip() and line.strip() != warn
         ]
 
-        # Print any stderr lines that are not the password warning
-        if stderr_lines:
-            print(f"stderr for file: {abs_file_path}")
-            print("\n".join(stderr_lines))
+        # If verbose, print the command, return code, stderr, and stdout. If not verbose but there are stderr lines (other than the ignored warning), print them with the file path for context.
+        if verbose:
 
-        # Check the return code to determine success
+            # Print the executed command and return code
+            print(f"\nmysql command: {' '.join(shell_command)}")
+            print(f"return code: {result.returncode}")
+
+            # Print stderr if there are any lines to show
+            if stderr_lines:
+                print("\nstderr:")
+                print("\n".join(stderr_lines))
+
+            # Print stdout if there is any output
+            if result.stdout.strip():
+                print("\nstdout:")
+                print(result.stdout)
+
+        else:
+            # If not verbose but there are stderr lines (other than the ignored warning), print them with the file path for context
+            if stderr_lines:
+                print(f"stderr for file: {abs_file_path}")
+                print("\n".join(stderr_lines))
+
+        # Check the return code to determine success or failure of the command execution
         if result.returncode != 0:
             return False
 
-        # If we got here, the command executed successfully
+        # If we reach this point, the command executed successfully (return code 0), so we return True
         return result
 
     #--------------------------------------------#
