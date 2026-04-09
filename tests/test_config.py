@@ -36,6 +36,25 @@ class TestGraphDBConfig(unittest.TestCase):
         with self.assertRaises(GraphDBConfigError):
             parsed.export_root()
 
+    def test_environment_config_accepts_ssl_block(self):
+        cfg = self._base_config()
+        cfg["environments"]["test_env"]["ssl"] = {
+            "ca": "/tmp/ca.pem",
+            "mode": "VERIFY_CA",
+        }
+        parsed = GraphDBConfig.from_dict(cfg)
+        env_name = parsed.env_names()[0]
+        env = parsed.environments[env_name]
+        self.assertIsInstance(env.ssl, dict)
+        self.assertEqual(env.ssl["ca"], "/tmp/ca.pem")
+        self.assertEqual(env.ssl["mode"], "VERIFY_CA")
+
+    def test_environment_config_rejects_invalid_ssl_block(self):
+        cfg = self._base_config()
+        cfg["environments"]["test_env"]["ssl"] = "not-a-dict"
+        with self.assertRaises(GraphDBConfigError):
+            GraphDBConfig.from_dict(cfg)
+
 
 if __name__ == "__main__":
     unittest.main()
