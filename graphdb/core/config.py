@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 from dataclasses import dataclass
+import os
 from pathlib import Path
 from typing import Any, Dict, Optional
 
@@ -63,6 +64,9 @@ class GraphDBConfig:
 
     @classmethod
     def default_path(cls) -> Path:
+        override = os.getenv("GRAPHDB_CONFIG")
+        if override:
+            return Path(override).expanduser().resolve()
         return Path(__file__).resolve().parents[2] / "config.yaml"
 
     @classmethod
