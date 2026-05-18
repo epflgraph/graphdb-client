@@ -323,9 +323,9 @@ class GraphDB():
             raise ValueError(f"Unsupported MySQL ssl mode: {mode_value}")
 
         for opt_keys, cli_option in [
-            (("ca", "ssl_ca"), "--ssl-ca"),
-            (("cert", "ssl_cert"), "--ssl-cert"),
-            (("key", "ssl_key"), "--ssl-key"),
+            (("ca"    , "ssl_ca"    ), "--ssl-ca"    ),
+            (("cert"  , "ssl_cert"  ), "--ssl-cert"  ),
+            (("key"   , "ssl_key"   ), "--ssl-key"   ),
             (("cipher", "ssl_cipher"), "--ssl-cipher"),
         ]:
             value = _pick(*opt_keys)
