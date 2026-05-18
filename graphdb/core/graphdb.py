@@ -233,7 +233,6 @@ class GraphDB():
             normalized[key.lower().replace('-', '_')] = value
         return normalized
 
-    @classmethod
     @staticmethod
     def _parse_bool(value):
         if isinstance(value, bool):
@@ -302,6 +301,14 @@ class GraphDB():
         verify_value = _pick("verify_server_cert", "ssl_verify_server_cert")
         verify_bool = cls._parse_bool(verify_value)
 
+        # MariaDB CLI compatibility:
+        # MariaDB's mysql client does not support Oracle MySQL's --ssl-mode=...
+        # It supports --ssl, --ssl-ca, --ssl-cert, --ssl-key, etc.
+        # If SSL options are present and not explicitly disabled, enable SSL.
+        if mode_value is not None and str(mode_value).strip().upper() == "DISABLED":
+            return []
+        flags.append("--ssl")
+
         if mode_value is None:
             if verify_bool is True:
                 mode_value = "VERIFY_IDENTITY"
@@ -314,8 +321,6 @@ class GraphDB():
         allowed_modes = {"DISABLED", "PREFERRED", "REQUIRED", "VERIFY_CA", "VERIFY_IDENTITY"}
         if mode_value not in allowed_modes:
             raise ValueError(f"Unsupported MySQL ssl mode: {mode_value}")
-
-        # flags.append(f"--ssl-mode={mode_value}")
 
         for opt_keys, cli_option in [
             (("ca", "ssl_ca"), "--ssl-ca"),
