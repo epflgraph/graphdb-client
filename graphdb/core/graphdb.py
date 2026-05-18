@@ -879,42 +879,45 @@ class GraphDB():
     #---------------------------------------------#
     def execute_query_in_shell(self, engine_name, query, verbose=False, query_id=None):
 
-        # Define the shell command
-        shell_command = self.base_command_mysql[engine_name] + ['-e', query]
+        # Define the shell command for execution
+        shell_command = self.base_command_mysql[engine_name] + ["-e", query]
 
         # If verbose is enabled, print the command being executed
         if verbose:
             print_sql(query, title=f"Executing query in shell{f' [{query_id}]' if query_id else ''}")
 
-        # Run the command and capture stdout and stderr
-        result = subprocess.run(shell_command, stdout=subprocess.PIPE, stderr=subprocess.PIPE, text=True)
+        # Execute the command using subprocess and capture the output and errors
+        result = subprocess.run(
+            shell_command,
+            stdout=subprocess.PIPE,
+            stderr=subprocess.PIPE,
+            text=True,
+        )
 
-        # Initialise return value
-        return_value = None
+        # Strip the stderr to remove any leading/trailing whitespace (including newlines)
+        stderr = result.stderr.strip()
 
-        # Handle stderr
+        # Ignore harmless mysql password warning
+        password_warning = "mysql: [Warning] Using a password on the command line interface can be insecure."
+        clean_stderr = "" if stderr == password_warning else stderr
+
+        # Verify the return code to determine if the command executed successfully
         if result.returncode == 0:
-            return_value = True
             if verbose:
                 print("\033[92m✅ Query executed successfully.\033[0m\n")
+            return True
 
-        else:
-            return_value = False
-            if result.stderr:
-                # Ignore the common password warning
-                if result.stderr.strip() == ("mysql: [Warning] Using a password on the command line interface can be insecure."):
-                    pass
-                else:
-                    print(f"Error message from MySQL:\n{result.stderr.strip()}\n")
-                    sysmsg.critical(f"Failed to execute query{f' [{query_id}]' if query_id else ''}.")
-                    exit()
-            else:
-                print("\033[91m‼️ Unknown error occurred.\033[0m\n")
-                sysmsg.critical(f"Failed to execute query{f' [{query_id}]' if query_id else ''}.")
-                exit()
+        # Generate a detailed error message including the command, return code, stderr, and stdout for diagnostics
+        message = (
+            f"Failed to execute query{f' [{query_id}]' if query_id else ''}.\n"
+            f"Return code: {result.returncode}\n"
+            f"STDERR:\n{clean_stderr or '<empty>'}\n"
+            f"STDOUT:\n{result.stdout.strip() or '<empty>'}"
+        )
 
-        # Return the result
-        return return_value
+        # Log the error message and raise an exception with the details
+        sysmsg.critical(message)
+        raise RuntimeError(message)
 
     #--------------------------------------------------------------#
     # Method: Executes a query in the MySQL shell from an SQL file #
