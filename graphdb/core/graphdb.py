@@ -315,7 +315,7 @@ class GraphDB():
         if mode_value not in allowed_modes:
             raise ValueError(f"Unsupported MySQL ssl mode: {mode_value}")
 
-        flags.append(f"--ssl-mode={mode_value}")
+        # flags.append(f"--ssl-mode={mode_value}")
 
         for opt_keys, cli_option in [
             (("ca", "ssl_ca"), "--ssl-ca"),
