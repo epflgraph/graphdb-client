@@ -247,6 +247,7 @@ def cmd_import(args):
     c = args.include_create_tables
     d = args.include_data
     i = args.ignore_existing
+    v = args.verbose
 
     #------------------#
     # Execute commands #
@@ -259,7 +260,8 @@ def cmd_import(args):
             schema_name  = args.schema_name,
             input_folder = f"{args.input_folder}/{args.table_name}",
             include_keys = False,
-            ignore_existing = i
+            ignore_existing = i,
+            verbose = v
         )
 
     # Import MySQL table definitions and data
@@ -269,7 +271,8 @@ def cmd_import(args):
             schema_name  = args.schema_name,
             input_folder = f"{args.input_folder}/{args.table_name}",
             create_keys_after_import = True,
-            ignore_existing = i
+            ignore_existing = i,
+            verbose = v
         )
 
     # Import MySQL table definitions and data for entire database
@@ -279,7 +282,8 @@ def cmd_import(args):
             schema_name  = args.schema_name,
             input_folder = args.input_folder,
             create_keys_after_import = True,
-            ignore_existing = i
+            ignore_existing = i,
+            verbose = v
         )
 
     # Nothing to do

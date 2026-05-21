@@ -149,7 +149,8 @@ cli_definitions: Dict[str, Any] = {
             dict(flags = ('--table_name'  ,), kwargs = dict(required=False, type=str, default=None, help="Name of the table to import (if importing only one table).")),
             dict(flags = ('--include_create_tables', '-c'), kwargs = dict(action='store_true', default=False, help="Include table definitions in import.")),
             dict(flags = ('--include_data'         , '-d'), kwargs = dict(action='store_true', default=False, help="Include data in import.")),
-            dict(flags = ('--ignore_existing'      , '-i'), kwargs = dict(action='store_true', default=False, help="Soft ignore table creation and existing rows."))
+            dict(flags = ('--ignore_existing'      , '-i'), kwargs = dict(action='store_true', default=False, help="Soft ignore table creation and existing rows.")),
+            dict(flags = ('--verbose'              , '-v'), kwargs = dict(action='store_true', default=False, help="Verbose mode.")),
         ],
         common_args_order = ['env'],
     ),
