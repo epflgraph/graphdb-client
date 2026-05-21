@@ -10,7 +10,7 @@ from pathlib import Path
 import numpy as np
 import pandas as pd
 from tabulate import tabulate
-import sys, os, re, subprocess, json, datetime, hashlib, random, glob, time, rich, ssl
+import sys, os, re, subprocess, json, datetime, hashlib, random, glob, time, rich, ssl, shlex
 from graphdb.core.config import GraphDBConfig, GraphDBConfigError
 from graphdb.models.sqlquery import print_sql
 
@@ -173,6 +173,7 @@ class GraphDB():
         self.engine = {}
         self.base_command_mysql = {}
         self.base_command_mysqldump = {}
+        self.subprocess_env = {}
 
         client_bin = self.config.client_bin
         dump_bin = self.config.dump_bin
@@ -183,10 +184,12 @@ class GraphDB():
             self.engine[env_name] = self._create_engine(params)
 
             env_var = f"MYSQL_{env_name.upper().replace('-', '_')}_PWD"
-            os.environ[env_var] = str(params["password"])
+            env = os.environ.copy()
+            env["MYSQL_PWD"] = str(params["password"])
+            self.subprocess_env[env_name] = env
 
-            mysql_supported_options = self._detect_cli_option_names(client_bin.split(" "))
-            dump_supported_options = self._detect_cli_option_names(dump_bin.split(" "))
+            mysql_supported_options = self._detect_cli_option_names(shlex.split(client_bin))
+            dump_supported_options = self._detect_cli_option_names(shlex.split(dump_bin))
             ssl_flags_mysql = self._build_ssl_cli_flags(
                 params.get("ssl"),
                 supported_options=mysql_supported_options
@@ -197,10 +200,9 @@ class GraphDB():
             )
 
             mysql_cmd = (
-                client_bin.split(" ")
+                shlex.split(client_bin)
                 + [
                     "-u", params["username"],
-                    f"--password={os.getenv(env_var)}",
                     "-h", params["host_address"],
                     "-P", str(params["port"]),
                 ]
@@ -210,10 +212,9 @@ class GraphDB():
             self.base_command_mysql[env_name] = mysql_cmd
 
             mysqldump_cmd = (
-                dump_bin.split(" ")
+                shlex.split(dump_bin)
                 + [
                     "-u", params["username"],
-                    f"--password={os.getenv(env_var)}",
                     "-h", params["host_address"],
                     "-P", str(params["port"]),
                 ]
@@ -549,8 +550,12 @@ class GraphDB():
 
     # Helper method to safely quote identifiers (e.g. database, table, column names) with backticks
     def _q(self, name: str) -> str:
-        """Backtick-quote an identifier safely (handles dots separately elsewhere)."""
+        """Backtick-quote a single SQL identifier safely."""
         return f"`{name.replace('`', '``')}`"
+
+    def _qt(self, schema_name: str, table_name: str) -> str:
+        """Backtick-quote a schema-qualified table name safely."""
+        return f"{self._q(schema_name)}.{self._q(table_name)}"
 
     #------------------------------------------------#
     # Method: Get CREATE TABLE statement for a table #
@@ -678,17 +683,16 @@ class GraphDB():
         if verbose:
             print_sql(query, title=f"Executing query{f' [{query_id}]' if query_id else ''}")
 
-        connection = self.engine[engine_name].connect()
+        connection_ctx = self.engine[engine_name].begin() if commit else self.engine[engine_name].connect()
         try:
-            if schema_name:
-                connection.execute(text(f"USE {schema_name}"))
-            result = connection.execute(text(query), parameters=params)
-            if result.returns_rows:
-                rows = result.fetchall()
-            else:
-                rows = []
-            if commit:
-                connection.commit()
+            with connection_ctx as connection:
+                if schema_name:
+                    connection.execute(text(f"USE {self._q(schema_name)}"))
+                result = connection.execute(text(query), parameters=params or {})
+                if result.returns_rows:
+                    rows = result.fetchall()
+                else:
+                    rows = []
         except (DataError, IntegrityError, SQLAlchemyError) as e:
             if return_exception:
                 # You can return different levels of detail here
@@ -701,8 +705,6 @@ class GraphDB():
                 print(f"\033[91mError executing query{f' [{query_id}]' if query_id else ''}.\033[0m")
                 print(e)
                 raise
-        finally:
-            connection.close()
         return rows
 
     #----------------------------------------------------#
@@ -965,6 +967,7 @@ class GraphDB():
             stdout=subprocess.PIPE,
             stderr=subprocess.PIPE,
             text=True,
+            env=self.subprocess_env.get(engine_name),
         )
 
         # Strip the stderr to remove any leading/trailing whitespace (including newlines)
@@ -1051,7 +1054,8 @@ class GraphDB():
                 input=sql_text,
                 stdout=subprocess.PIPE,
                 stderr=subprocess.PIPE,
-                text=True
+                text=True,
+                env=self.subprocess_env.get(engine_name),
             )
 
         # Handle file reading errors and subprocess execution errors separately for clearer diagnostics
@@ -1868,10 +1872,14 @@ class GraphDB():
                     shell_command = self.base_command_mysqldump[engine_name] + [schema_name, table_name, f'--where="{filter_by} AND (row_id BETWEEN {offset} AND {offset + chunk_size - 1})"'] + ['--result-file=' + output_file]
 
                     # Generate shell text command
-                    shell_text_command = ' '.join(shell_command)
-
                     # Run the command and capture stdout and stderr
-                    result = subprocess.run(shell_text_command, stdout=subprocess.PIPE, stderr=subprocess.PIPE, text=True, shell=True)
+                    result = subprocess.run(
+                        shell_command,
+                        stdout=subprocess.PIPE,
+                        stderr=subprocess.PIPE,
+                        text=True,
+                        env=self.subprocess_env.get(engine_name),
+                    )
 
                     # Check if there's a MySQL-specific warning
                     if result.stderr:
@@ -1905,10 +1913,14 @@ class GraphDB():
             ]
 
             # Generate shell text command
-            shell_text_command = ' '.join(shell_command)
-
             # Run the command and capture stdout and stderr
-            result = subprocess.run(shell_text_command, stdout=subprocess.PIPE, stderr=subprocess.PIPE, text=True, shell=True)
+            result = subprocess.run(
+                shell_command,
+                stdout=subprocess.PIPE,
+                stderr=subprocess.PIPE,
+                text=True,
+                env=self.subprocess_env.get(engine_name),
+            )
 
             # Check if there's a MySQL-specific warning
             if result.stderr and 'Using a password on the command line interface can be insecure' not in result.stderr:
@@ -2504,7 +2516,7 @@ class GraphDB():
         # -------------------------
         # Build comparison table rows
         # -------------------------
-        OK, WARN, ERR = "✅ ", "⚠️", "❌ "
+        OK, WARN, ERR = "✅", "⚠️", "❌"
 
         def _row(metric, a, b, formatter, sev_on_diff):
             if a == b:
@@ -2623,42 +2635,43 @@ class GraphDB():
     #------------------------------------------#
     def json_file_to_sql_file(self, json_file_path, sql_file_path, schema_name, table_name, include_file_id=False):
 
-        # Get file id from the file path
         file_id = os.path.basename(json_file_path).split('.')[0]
 
-        # Get the JSON list from file
-        with open(json_file_path, 'r') as file:
+        with open(json_file_path, 'r', encoding='utf-8') as file:
             json_list = json.load(file)
 
-        # Check if the JSON list is empty
         if not json_list:
             return False
 
-        # Get the column names from json keys
         column_names = list(json_list[0].keys())
+        insert_columns = (["file_id"] if include_file_id else []) + column_names
 
-        # Generate column names string
-        column_names_str = ', '.join(['file_id'] + column_names)
+        def sql_value(value):
+            if value is None:
+                return "NULL"
+            if isinstance(value, (dict, list)):
+                value = json.dumps(value, ensure_ascii=False)
+            return json.dumps(str(value), ensure_ascii=False)
 
-        # Initialize the SQL INSERTS
-        sql_inserts = f"INSERT INTO {schema_name}.{table_name} ({column_names_str}) VALUES "
-
-        # Loop over the JSON list
+        values_rows = []
         for row in json_list:
+            values = []
+            if include_file_id:
+                values.append(sql_value(file_id))
+            values.extend(sql_value(row.get(column)) for column in column_names)
+            values_rows.append(f"({', '.join(values)})")
 
-            # Generate values string
-            values_str = ', '.join([file_id] + [f'"{row[column]}"' for column in column_names])
+        sql_inserts = (
+            f"INSERT INTO {self._qt(schema_name, table_name)} "
+            f"({', '.join(self._q(c) for c in insert_columns)}) VALUES\n"
+            + ",\n".join(values_rows)
+            + ";\n"
+        )
 
-            # Append the SQL INSERT statement
-            sql_inserts += f"({values_str}),"
-
-        # Replace the trailing comma with a semicolon
-        if sql_inserts.endswith(','):
-            sql_inserts = sql_inserts[:-1] + ';'
-
-        # Write the SQL INSERTS to file
-        with open(sql_file_path, 'w') as file:
+        with open(sql_file_path, 'w', encoding='utf-8') as file:
             file.write(sql_inserts)
+
+        return True
 
     #-----------------------------------------------#
     # Method: Compare two tables by random sampling #
@@ -2714,7 +2727,7 @@ class GraphDB():
                 sql_query_stack = []
                 for colval in partition_column_possible_vals:
                     sql_query_stack += [
-                        f"(SELECT {', '.join(primary_keys)} FROM {schema_name}.{table_name} WHERE object_type = '{colval}' ORDER BY RAND() LIMIT {round(sample_size/len(object_types))})",
+                        f"(SELECT {', '.join(primary_keys)} FROM {schema_name}.{table_name} WHERE object_type = '{colval}' ORDER BY RAND() LIMIT {round(sample_size/len(partition_column_possible_vals))})",
                     ]
                 sql_query = ' UNION ALL '.join(sql_query_stack)
 
@@ -2764,13 +2777,13 @@ class GraphDB():
     def compare_tables_by_random_sampling(self, source_engine_name, source_schema_name, source_table_name, target_engine_name, target_schema_name, target_table_name, sample_size=1024):
 
         # Check if the source table exists
-        if not self.table_exists(engine_name=source_engine_name, schema_name=source_schema_name, table_name=target_table_name):
-            sysmsg.error(f"🚨 Table {source_schema_name}.{target_table_name} does not exist in '{source_engine_name}'.")
+        if not self.table_exists(engine_name=source_engine_name, schema_name=source_schema_name, table_name=source_table_name):
+            sysmsg.error(f"🚨 Table {source_schema_name}.{source_table_name} does not exist in '{source_engine_name}'.")
             return
 
         # Check if the target table exists
-        if not self.table_exists(engine_name=target_engine_name, schema_name=target_schema_name, table_name=source_table_name):
-            sysmsg.error(f"🚨 Table {target_schema_name}.{source_table_name} does not exist in '{target_engine_name}'.")
+        if not self.table_exists(engine_name=target_engine_name, schema_name=target_schema_name, table_name=target_table_name):
+            sysmsg.error(f"🚨 Table {target_schema_name}.{target_table_name} does not exist in '{target_engine_name}'.")
             return
 
         # Detect table type
