@@ -1850,7 +1850,7 @@ class GraphDB():
             max_row_id = int(max_row_id)
 
             # Check if there are any rows to process
-            if min_row_id >= max_row_id:
+            if min_row_id > max_row_id:
                 sysmsg.warning(f"No rows found in table {schema_name}.{table_name} with filter '{filter_by}'.")
                 return
 
@@ -1869,7 +1869,11 @@ class GraphDB():
                         continue
 
                     # Generate shell command to dump table chunck using mysqldump executable
-                    shell_command = self.base_command_mysqldump[engine_name] + [schema_name, table_name, f'--where="{filter_by} AND (row_id BETWEEN {offset} AND {offset + chunk_size - 1})"'] + ['--result-file=' + output_file]
+                    shell_command = self.base_command_mysqldump[engine_name] + [
+                        schema_name,
+                        table_name,
+                        f'--where={filter_by} AND (row_id BETWEEN {offset} AND {offset + chunk_size - 1})',
+                    ] + ['--result-file=' + output_file]
 
                     # Generate shell text command
                     # Run the command and capture stdout and stderr
@@ -1908,7 +1912,7 @@ class GraphDB():
             shell_command = self.base_command_mysqldump[engine_name] + [
                 schema_name,
                 table_name,
-                f'--where="{filter_by}"',
+                f'--where={filter_by}',
                 f'--result-file={output_file}'
             ]
 
