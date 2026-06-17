@@ -30,6 +30,29 @@ class TestGraphDBSSLHelpers(unittest.TestCase):
         self.assertEqual(opts["cert_reqs"], ssl.CERT_NONE)
         self.assertFalse(opts["check_hostname"])
 
+    def test_build_ssl_cli_flags_uses_ssl_mode_when_supported(self):
+        flags = GraphDB._build_ssl_cli_flags(
+            {"mode": "VERIFY_CA", "ca": "/tmp/ca.pem"},
+            supported_options={"ssl-mode", "ssl-ca"},
+        )
+        self.assertIn("--ssl-mode=VERIFY_CA", flags)
+        self.assertIn("--ssl-ca=/tmp/ca.pem", flags)
+        self.assertNotIn("--ssl", flags)
+
+    def test_build_ssl_cli_flags_uses_legacy_verify_toggles_when_supported(self):
+        true_flags = GraphDB._build_ssl_cli_flags(
+            {"verify_server_cert": True},
+            supported_options={"ssl", "ssl-verify-server-cert", "skip-ssl-verify-server-cert"},
+        )
+        false_flags = GraphDB._build_ssl_cli_flags(
+            {"verify_server_cert": False},
+            supported_options={"ssl", "ssl-verify-server-cert", "skip-ssl-verify-server-cert"},
+        )
+        self.assertIn("--ssl", true_flags)
+        self.assertIn("--ssl-verify-server-cert", true_flags)
+        self.assertIn("--ssl", false_flags)
+        self.assertIn("--skip-ssl-verify-server-cert", false_flags)
+
 
 if __name__ == "__main__":
     unittest.main()

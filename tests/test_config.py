@@ -55,6 +55,27 @@ class TestGraphDBConfig(unittest.TestCase):
         with self.assertRaises(GraphDBConfigError):
             GraphDBConfig.from_dict(cfg)
 
+    def test_environment_config_accepts_env_specific_clients_and_dialect(self):
+        cfg = self._base_config()
+        cfg["environments"]["test_env"]["client_bin"] = "/usr/local/bin/mariadb"
+        cfg["environments"]["test_env"]["dump_bin"] = "/usr/local/bin/mariadb-dump"
+        cfg["environments"]["test_env"]["engine_flavor"] = "mariadb"
+        cfg["environments"]["test_env"]["sqlalchemy_dialect"] = "mysql"
+        cfg["environments"]["test_env"]["sqlalchemy_driver"] = "pymysql"
+        parsed = GraphDBConfig.from_dict(cfg)
+        env = parsed.environments["test"]
+        self.assertEqual(env.client_bin, "/usr/local/bin/mariadb")
+        self.assertEqual(env.dump_bin, "/usr/local/bin/mariadb-dump")
+        self.assertEqual(env.engine_flavor, "mariadb")
+        self.assertEqual(env.sqlalchemy_dialect, "mysql")
+        self.assertEqual(env.sqlalchemy_driver, "pymysql")
+
+    def test_environment_config_rejects_invalid_engine_flavor(self):
+        cfg = self._base_config()
+        cfg["environments"]["test_env"]["engine_flavor"] = "postgres"
+        with self.assertRaises(GraphDBConfigError):
+            GraphDBConfig.from_dict(cfg)
+
 
 if __name__ == "__main__":
     unittest.main()

@@ -78,6 +78,12 @@ class EnvironmentConfig:
     username: str
     password: str
     ssl: Optional[Dict[str, Any]] = None
+    client_bin: Optional[str] = None
+    dump_bin: Optional[str] = None
+    engine_flavor: Optional[str] = None
+    sqlalchemy_url: Optional[str] = None
+    sqlalchemy_dialect: Optional[str] = None
+    sqlalchemy_driver: Optional[str] = None
 
     @classmethod
     def from_dict(cls, env_name: str, raw: Dict[str, Any]) -> "EnvironmentConfig":
@@ -92,12 +98,25 @@ class EnvironmentConfig:
             raise GraphDBConfigError(
                 f"Environment '{env_name}' ssl block must be a dictionary."
             )
+        engine_flavor = raw.get("engine_flavor")
+        if engine_flavor is not None:
+            engine_flavor = str(engine_flavor).strip().lower()
+            if engine_flavor not in {"mysql", "mariadb"}:
+                raise GraphDBConfigError(
+                    f"Environment '{env_name}' engine_flavor must be one of: mysql, mariadb."
+                )
         return cls(
             host_address=str(raw["host_address"]),
             port=int(raw["port"]),
             username=str(raw["username"]),
             password=str(raw["password"]),
             ssl=ssl_cfg,
+            client_bin=str(raw["client_bin"]) if raw.get("client_bin") else None,
+            dump_bin=str(raw["dump_bin"]) if raw.get("dump_bin") else None,
+            engine_flavor=engine_flavor,
+            sqlalchemy_url=str(raw["sqlalchemy_url"]) if raw.get("sqlalchemy_url") else None,
+            sqlalchemy_dialect=str(raw["sqlalchemy_dialect"]) if raw.get("sqlalchemy_dialect") else None,
+            sqlalchemy_driver=str(raw["sqlalchemy_driver"]) if raw.get("sqlalchemy_driver") else None,
         )
 
     def as_dict(self) -> Dict[str, Any]:
@@ -107,6 +126,12 @@ class EnvironmentConfig:
             "username": self.username,
             "password": self.password,
             "ssl": self.ssl,
+            "client_bin": self.client_bin,
+            "dump_bin": self.dump_bin,
+            "engine_flavor": self.engine_flavor,
+            "sqlalchemy_url": self.sqlalchemy_url,
+            "sqlalchemy_dialect": self.sqlalchemy_dialect,
+            "sqlalchemy_driver": self.sqlalchemy_driver,
         }
 
 

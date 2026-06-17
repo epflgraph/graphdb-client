@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import json
+import os
 import shutil
 from pathlib import Path
 
@@ -10,7 +11,7 @@ from graphdb.core.graphdb import GraphDB
 
 
 SCHEMA = "_pytests_"
-E2E_ENGINE = "pytests"
+E2E_ENGINE = os.getenv("GRAPHDB_E2E_ENV", "pytests")
 
 
 def _drop_all_objects(db: GraphDB, engine_name: str, schema: str) -> None:
@@ -25,15 +26,14 @@ def graphdb_env() -> tuple[GraphDB, str]:
     db = GraphDB()
     if E2E_ENGINE not in db.engine:
         configured = ", ".join(sorted(db.engine.keys()))
-        pytest.fail(
-            f"Required MySQL environment '{E2E_ENGINE}' is missing in config. "
-            f"Configured environments: [{configured}]",
-            pytrace=False,
+        pytest.skip(
+            f"E2E environment '{E2E_ENGINE}' is missing in config. "
+            f"Configured environments: [{configured}]. "
+            f"Set GRAPHDB_E2E_ENV to a valid environment to run E2E tests."
         )
     if not db.test(engine_name=E2E_ENGINE):
-        pytest.fail(
-            f"Required MySQL environment '{E2E_ENGINE}' is configured but not reachable.",
-            pytrace=False,
+        pytest.skip(
+            f"E2E environment '{E2E_ENGINE}' is configured but not reachable."
         )
     return db, E2E_ENGINE
 

@@ -1,6 +1,7 @@
 #!/usr/bin/env python3
 # -*- coding: utf-8 -*-
 from sqlalchemy import create_engine as SQLEngine, text, event
+from sqlalchemy.pool import NullPool
 from sqlalchemy.exc import DataError, IntegrityError, SQLAlchemyError
 from sqlalchemy.dialects.mysql import dialect as MySQLDialect
 from typing import Any, Dict, Optional
@@ -10,7 +11,7 @@ from pathlib import Path
 import numpy as np
 import pandas as pd
 from tabulate import tabulate
-import sys, os, re, subprocess, json, datetime, hashlib, random, glob, time, rich, ssl, shlex
+import sys, os, re, subprocess, json, datetime, hashlib, random, glob, time, rich, ssl
 from graphdb.core.config import GraphDBConfig, GraphDBConfigError
 from graphdb.models.sqlquery import print_sql
 
@@ -149,7 +150,6 @@ class GraphDB():
 
     # Class variable to hold the single instance
     _instance = None
-    _cli_option_cache: Dict[str, set] = {}
 
     # Create new instance of class before __init__ is called
     def __new__(cls, *args, **kwargs):
@@ -173,56 +173,44 @@ class GraphDB():
         self.engine = {}
         self.base_command_mysql = {}
         self.base_command_mysqldump = {}
-        self.subprocess_env = {}
+
+        client_bin = self.config.client_bin
+        dump_bin = self.config.dump_bin
 
         for env_name, env_config in self.config.environments.items():
             params = env_config.as_dict()
             self.params[env_name] = params
             self.engine[env_name] = self._create_engine(params)
 
-            client_bin = params.get("client_bin") or self.config.client_bin
-            dump_bin = params.get("dump_bin") or self.config.dump_bin
-
             env_var = f"MYSQL_{env_name.upper().replace('-', '_')}_PWD"
-            env = os.environ.copy()
-            env["MYSQL_PWD"] = str(params["password"])
-            self.subprocess_env[env_name] = env
+            os.environ[env_var] = str(params["password"])
 
-            mysql_supported_options = self._detect_cli_option_names(shlex.split(client_bin))
-            dump_supported_options = self._detect_cli_option_names(shlex.split(dump_bin))
-            ssl_flags_mysql = self._build_ssl_cli_flags(
-                params.get("ssl"),
-                supported_options=mysql_supported_options,
-                engine_flavor=params.get("engine_flavor"),
-            )
-            ssl_flags_mysqldump = self._build_ssl_cli_flags(
-                params.get("ssl"),
-                supported_options=dump_supported_options,
-                engine_flavor=params.get("engine_flavor"),
-            )
+            ssl_flags = self._build_ssl_cli_flags(params.get("ssl"))
 
             mysql_cmd = (
-                shlex.split(client_bin)
+                client_bin.split(" ")
                 + [
                     "-u", params["username"],
+                    f"--password={os.getenv(env_var)}",
                     "-h", params["host_address"],
                     "-P", str(params["port"]),
                 ]
             )
-            if ssl_flags_mysql:
-                mysql_cmd += ssl_flags_mysql
+            if ssl_flags:
+                mysql_cmd += ssl_flags
             self.base_command_mysql[env_name] = mysql_cmd
 
             mysqldump_cmd = (
-                shlex.split(dump_bin)
+                dump_bin.split(" ")
                 + [
                     "-u", params["username"],
+                    f"--password={os.getenv(env_var)}",
                     "-h", params["host_address"],
                     "-P", str(params["port"]),
                 ]
             )
-            if ssl_flags_mysqldump:
-                mysqldump_cmd += ssl_flags_mysqldump
+            if ssl_flags:
+                mysqldump_cmd += ssl_flags
             mysqldump_cmd += [
                 "-v",
                 "--no-create-db",
@@ -230,10 +218,6 @@ class GraphDB():
                 "--skip-lock-tables",
                 "--single-transaction",
             ]
-            # MySQL 8 clients can query COLUMN_STATISTICS, which breaks against
-            # older servers that do not expose information_schema.COLUMN_STATISTICS.
-            if "column-statistics" in dump_supported_options:
-                mysqldump_cmd += ["--column-statistics=0"]
             self.base_command_mysqldump[env_name] = mysqldump_cmd
 
     #-------------------------------#
@@ -300,39 +284,11 @@ class GraphDB():
         return connect_args
 
     @classmethod
-    def _detect_cli_option_names(cls, base_command):
-        if not base_command:
-            return set()
-
-        cache_key = " ".join(base_command)
-        if cache_key in cls._cli_option_cache:
-            return cls._cli_option_cache[cache_key]
-
-        options = set()
-        try:
-            result = subprocess.run(
-                base_command + ["--help"],
-                stdout=subprocess.PIPE,
-                stderr=subprocess.PIPE,
-                text=True,
-                check=False
-            )
-            help_text = f"{result.stdout}\n{result.stderr}"
-            for option in re.findall(r"^\s*(?:-[^,\s]+,\s+)?--([a-z0-9][a-z0-9-]*)", help_text, flags=re.MULTILINE):
-                options.add(option.lower())
-        except Exception:
-            options = set()
-
-        cls._cli_option_cache[cache_key] = options
-        return options
-
-    @classmethod
-    def _build_ssl_cli_flags(cls, ssl_options, supported_options=None, engine_flavor=None):
+    def _build_ssl_cli_flags(cls, ssl_options):
 
         normalized = cls._normalize_ssl_options(ssl_options)
         if not normalized:
             return []
-        supported_options = {opt.lower() for opt in (supported_options or set())}
 
         flags = []
 
@@ -346,35 +302,27 @@ class GraphDB():
         verify_value = _pick("verify_server_cert", "ssl_verify_server_cert")
         verify_bool = cls._parse_bool(verify_value)
 
-        # Decide between MySQL's --ssl-mode and legacy/MariaDB --ssl.
+        # MariaDB CLI compatibility:
+        # MariaDB's mysql client does not support Oracle MySQL's --ssl-mode=...
+        # It supports --ssl, --ssl-ca, --ssl-cert, --ssl-key, etc.
+        # If SSL options are present and not explicitly disabled, enable SSL.
         if mode_value is not None and str(mode_value).strip().upper() == "DISABLED":
             return []
+        flags.append("--ssl")
+        # Trace code: [5fDf54GFs4da]
 
-        if "ssl-mode" in supported_options:
-            if mode_value is None:
-                if verify_bool is True:
-                    mode_value = "VERIFY_IDENTITY"
-                elif verify_bool is False:
-                    mode_value = "REQUIRED"
-                else:
-                    mode_value = "REQUIRED"
+        if mode_value is None:
+            if verify_bool is True:
+                mode_value = "VERIFY_IDENTITY"
+            elif verify_bool is False:
+                mode_value = "REQUIRED"
+            else:
+                mode_value = "REQUIRED"
 
-            mode_value = str(mode_value).strip().upper()
-            allowed_modes = {"DISABLED", "PREFERRED", "REQUIRED", "VERIFY_CA", "VERIFY_IDENTITY"}
-            if mode_value not in allowed_modes:
-                raise ValueError(f"Unsupported MySQL ssl mode: {mode_value}")
-
-            flags.append(f"--ssl-mode={mode_value}")
-
-        elif "ssl" in supported_options or not supported_options:
-            # Fall back to legacy option for clients that do not expose --ssl-mode.
-            flags.append("--ssl")
-
-            # Legacy verify toggles (commonly available on MariaDB and older MySQL clients).
-            if verify_bool is True and (not supported_options or "ssl-verify-server-cert" in supported_options):
-                flags.append("--ssl-verify-server-cert")
-            elif verify_bool is False and (not supported_options or "skip-ssl-verify-server-cert" in supported_options):
-                flags.append("--skip-ssl-verify-server-cert")
+        mode_value = str(mode_value).strip().upper()
+        allowed_modes = {"DISABLED", "PREFERRED", "REQUIRED", "VERIFY_CA", "VERIFY_IDENTITY"}
+        if mode_value not in allowed_modes:
+            raise ValueError(f"Unsupported MySQL ssl mode: {mode_value}")
 
         for opt_keys, cli_option in [
             (("ca"    , "ssl_ca"    ), "--ssl-ca"    ),
@@ -383,7 +331,7 @@ class GraphDB():
             (("cipher", "ssl_cipher"), "--ssl-cipher"),
         ]:
             value = _pick(*opt_keys)
-            if value is not None and (not supported_options or cli_option.lstrip("-") in supported_options):
+            if value is not None:
                 flags.append(f"{cli_option}={value}")
 
         return flags
@@ -394,21 +342,17 @@ class GraphDB():
     def _create_engine(self, params):
         ssl_connect_args = self._build_ssl_connect_args(params.get("ssl"))
         engine_kwargs = {"pool_pre_ping": True}
+        # Use non-sticky connections for graphdb CLI jobs (copy/export/import)
+        # to avoid saturating MySQL connection pools across repeated invocations.
+        if os.path.basename(sys.argv[0]) == "graphdb":
+            engine_kwargs["poolclass"] = NullPool
         if ssl_connect_args:
             engine_kwargs["connect_args"] = {"ssl": ssl_connect_args}
 
-        sqlalchemy_url = params.get("sqlalchemy_url")
-        if sqlalchemy_url:
-            engine_url = str(sqlalchemy_url)
-        else:
-            sqlalchemy_dialect = str(params.get("sqlalchemy_dialect") or "mysql")
-            sqlalchemy_driver = str(params.get("sqlalchemy_driver") or "pymysql")
-            engine_url = (
-                f'{sqlalchemy_dialect}+{sqlalchemy_driver}://'
-                f'{params["username"]}:{params["password"]}@{params["host_address"]}:{params["port"]}/'
-            )
-
-        engine = SQLEngine(engine_url, **engine_kwargs)
+        engine = SQLEngine(
+            f'mysql+pymysql://{params["username"]}:{params["password"]}@{params["host_address"]}:{params["port"]}/',
+            **engine_kwargs
+        )
         @event.listens_for(engine, "connect")
         def set_sql_mode(dbapi_conn, _):
             with dbapi_conn.cursor() as cur:
@@ -474,32 +418,6 @@ class GraphDB():
 
         # Check if the table exists
         return len(tables) > 0
-
-    #--------------------------------#
-    # Method: Check if column exists #
-    #--------------------------------#
-    def column_exists(self, engine_name, schema_name, table_name, column_name):
-        query = f"""
-            SELECT COLUMN_NAME
-            FROM INFORMATION_SCHEMA.COLUMNS
-            WHERE TABLE_SCHEMA = '{schema_name}'
-              AND TABLE_NAME   = '{table_name}'
-              AND COLUMN_NAME  = '{column_name}'
-        """
-        return len(self.execute_query(engine_name=engine_name, query=query)) > 0
-
-    #-----------------------------#
-    # Method: Check if key exists #
-    #-----------------------------#
-    def key_exists(self, engine_name, schema_name, table_name, key_name):
-        query = f"""
-            SELECT INDEX_NAME
-            FROM INFORMATION_SCHEMA.STATISTICS
-            WHERE TABLE_SCHEMA = '{schema_name}'
-              AND TABLE_NAME   = '{table_name}'
-              AND INDEX_NAME   = '{key_name}'
-        """
-        return len(self.execute_query(engine_name=engine_name, query=query)) > 0
 
     #--------------------------------------------#
     # Method: Count number of rows (with filter) #
@@ -569,12 +487,8 @@ class GraphDB():
 
     # Helper method to safely quote identifiers (e.g. database, table, column names) with backticks
     def _q(self, name: str) -> str:
-        """Backtick-quote a single SQL identifier safely."""
+        """Backtick-quote an identifier safely (handles dots separately elsewhere)."""
         return f"`{name.replace('`', '``')}`"
-
-    def _qt(self, schema_name: str, table_name: str) -> str:
-        """Backtick-quote a schema-qualified table name safely."""
-        return f"{self._q(schema_name)}.{self._q(table_name)}"
 
     #------------------------------------------------#
     # Method: Get CREATE TABLE statement for a table #
@@ -702,16 +616,17 @@ class GraphDB():
         if verbose:
             print_sql(query, title=f"Executing query{f' [{query_id}]' if query_id else ''}")
 
-        connection_ctx = self.engine[engine_name].begin() if commit else self.engine[engine_name].connect()
+        connection = self.engine[engine_name].connect()
         try:
-            with connection_ctx as connection:
-                if schema_name:
-                    connection.execute(text(f"USE {self._q(schema_name)}"))
-                result = connection.execute(text(query), parameters=params or {})
-                if result.returns_rows:
-                    rows = result.fetchall()
-                else:
-                    rows = []
+            if schema_name:
+                connection.execute(text(f"USE {schema_name}"))
+            result = connection.execute(text(query), parameters=params)
+            if result.returns_rows:
+                rows = result.fetchall()
+            else:
+                rows = []
+            if commit:
+                connection.commit()
         except (DataError, IntegrityError, SQLAlchemyError) as e:
             if return_exception:
                 # You can return different levels of detail here
@@ -724,6 +639,8 @@ class GraphDB():
                 print(f"\033[91mError executing query{f' [{query_id}]' if query_id else ''}.\033[0m")
                 print(e)
                 raise
+        finally:
+            connection.close()
         return rows
 
     #----------------------------------------------------#
@@ -986,7 +903,6 @@ class GraphDB():
             stdout=subprocess.PIPE,
             stderr=subprocess.PIPE,
             text=True,
-            env=self.subprocess_env.get(engine_name),
         )
 
         # Strip the stderr to remove any leading/trailing whitespace (including newlines)
@@ -1040,26 +956,6 @@ class GraphDB():
         if database:
             shell_command.append(database)
 
-        # Read the SQL file content
-        with open(abs_file_path, "r", encoding="utf-8") as sql_file:
-            sql_text = sql_file.read()
-
-        # Check if there's an actual SQL command in file content
-        # If not, issue warning and return
-        if not sql_text.strip():
-            print(f"⚠️  SQL file is empty: {abs_file_path}")
-            return False
-
-        # Print command if verbose
-        if verbose:
-            print('\n')
-            print("Executing command:")
-            print(shell_command)
-            print('\n')
-            print("with SQL text:")
-            print(sql_text)
-            print('\n')
-
         # If verbose is enabled, add the flag to show warnings in the mysql command output
         if verbose:
             shell_command += ["--show-warnings"]
@@ -1067,27 +963,40 @@ class GraphDB():
         # Read the SQL file content and execute it via subprocess, passing the SQL text through stdin
         try:
 
+            # Read the SQL file content
+            with open(abs_file_path, "r", encoding="utf-8") as sql_file:
+                sql_text = sql_file.read()
+
+            # Check if there's an actual SQL command in file content
+            # If not, issue warning and return
+            if not sql_text.strip():
+                print(f"⚠️  SQL file is empty: {abs_file_path}")
+                return False
+
+            # If verbose, print the SQL text being executed
+            if verbose:
+                print_sql(sql_text)
+
             # Execute the SQL command via subprocess, passing the SQL text through stdin
             result = subprocess.run(
                 shell_command,
                 input=sql_text,
                 stdout=subprocess.PIPE,
                 stderr=subprocess.PIPE,
-                text=True,
-                env=self.subprocess_env.get(engine_name),
+                text=True
             )
 
         # Handle file reading errors and subprocess execution errors separately for clearer diagnostics
         except OSError as exc:
             print(f"Failed to open SQL file: {abs_file_path}")
             print(str(exc))
-            raise RuntimeError(f"Failed to open SQL file: {abs_file_path}") from exc
+            return False
 
         # Note: subprocess.run can raise a CalledProcessError if the command returns a non-zero exit status and check=True is used, but since we're not using check=True, it will not raise an exception for non-zero exit codes. However, it can still raise exceptions for other issues (e.g., if the mysql command is not found), which we catch here.
         except Exception as exc:
             print(f"Failed to execute mysql command for file: {abs_file_path}")
             print(str(exc))
-            raise RuntimeError(f"Failed to execute mysql command for file: {abs_file_path}") from exc
+            return False
 
         # Process the result and handle stderr, ignoring the common password warning
         warn = "mysql: [Warning] Using a password on the command line interface can be insecure."
@@ -1121,7 +1030,7 @@ class GraphDB():
 
         # Check the return code to determine success or failure of the command execution
         if result.returncode != 0:
-            raise RuntimeError(f"mysql command failed for file: {abs_file_path}")
+            return False
 
         # If we reach this point, the command executed successfully (return code 0), so we return True
         return result
@@ -1821,10 +1730,9 @@ class GraphDB():
             if 'UNIQUE KEY' in line or 'KEY' in line or 'INDEX' in line or 'CONSTRAINT' in line:
                 line = line.strip()
                 line = line[:-1] if line.endswith(',') else line
-                # TODO: ...
-                # for key_type in ('UNIQUE KEY', 'KEY', 'INDEX', 'CONSTRAINT'):
-                #     if "IF NOT EXISTS" not in line:
-                #         line = line.replace(key_type, key_type+" IF NOT EXISTS ")
+                for key_type in ('UNIQUE KEY', 'KEY', 'INDEX', 'CONSTRAINT'):
+                    if "IF NOT EXISTS" not in line:
+                        line = line.replace(key_type, key_type+" IF NOT EXISTS ")
                 create_keys_sql += f"ALTER TABLE `{table_name}` ADD {line};\n"
 
         # Save all definitions to output folder
@@ -1846,15 +1754,6 @@ class GraphDB():
         # Create the output folder if it does not exist
         if not os.path.exists(output_folder):
             os.makedirs(output_folder)
-
-        def _clean_dump_stderr(stderr_text):
-            warning_fragment = "Using a password on the command line interface can be insecure."
-            lines = []
-            for line in (stderr_text or "").splitlines():
-                if warning_fragment in line:
-                    continue
-                lines.append(line)
-            return "\n".join(lines).strip()
 
         # Check if row_id column exists in the table
         check_column_query = f"""
@@ -1878,7 +1777,7 @@ class GraphDB():
             max_row_id = int(max_row_id)
 
             # Check if there are any rows to process
-            if min_row_id > max_row_id:
+            if min_row_id >= max_row_id:
                 sysmsg.warning(f"No rows found in table {schema_name}.{table_name} with filter '{filter_by}'.")
                 return
 
@@ -1897,32 +1796,25 @@ class GraphDB():
                         continue
 
                     # Generate shell command to dump table chunck using mysqldump executable
-                    shell_command = self.base_command_mysqldump[engine_name] + [
-                        schema_name,
-                        table_name,
-                        f'--where={filter_by} AND (row_id BETWEEN {offset} AND {offset + chunk_size - 1})',
-                    ] + ['--result-file=' + output_file]
+                    shell_command = self.base_command_mysqldump[engine_name] + [schema_name, table_name, f'--where="{filter_by} AND (row_id BETWEEN {offset} AND {offset + chunk_size - 1})"'] + ['--result-file=' + output_file]
 
                     # Generate shell text command
-                    # Run the command and capture stdout and stderr
-                    result = subprocess.run(
-                        shell_command,
-                        stdout=subprocess.PIPE,
-                        stderr=subprocess.PIPE,
-                        text=True,
-                        env=self.subprocess_env.get(engine_name),
-                    )
+                    shell_text_command = ' '.join(shell_command)
 
-                    clean_stderr = _clean_dump_stderr(result.stderr)
-                    if result.returncode != 0:
-                        message = (
-                            f"Failed to dump table chunk {schema_name}.{table_name} (offset={offset}).\n"
-                            f"Return code: {result.returncode}\n"
-                            f"STDERR:\n{clean_stderr or '<empty>'}\n"
-                            f"STDOUT:\n{result.stdout.strip() or '<empty>'}"
-                        )
-                        sysmsg.critical(message)
-                        raise RuntimeError(message)
+                    # Run the command and capture stdout and stderr
+                    result = subprocess.run(shell_text_command, stdout=subprocess.PIPE, stderr=subprocess.PIPE, text=True, shell=True)
+
+                    # Check if there's a MySQL-specific warning
+                    if result.stderr:
+                        if result.stderr.strip() == 'mysql: [Warning] Using a password on the command line interface can be insecure.':
+                            # Suppress the warning by doing nothing
+                            pass
+                        else:
+                            # Print the stderr output if it's not the specific MySQL warning
+                            if 'ERROR' in result.stderr:
+                                print('Error dumping table:', table_name)
+                                print(result.stderr)
+                                exit()
 
         # Else, if row_id does not exist, dump the entire table at once
         else:
@@ -1939,30 +1831,21 @@ class GraphDB():
             shell_command = self.base_command_mysqldump[engine_name] + [
                 schema_name,
                 table_name,
-                f'--where={filter_by}',
+                f'--where="{filter_by}"',
                 f'--result-file={output_file}'
             ]
 
             # Generate shell text command
-            # Run the command and capture stdout and stderr
-            result = subprocess.run(
-                shell_command,
-                stdout=subprocess.PIPE,
-                stderr=subprocess.PIPE,
-                text=True,
-                env=self.subprocess_env.get(engine_name),
-            )
+            shell_text_command = ' '.join(shell_command)
 
-            clean_stderr = _clean_dump_stderr(result.stderr)
-            if result.returncode != 0:
-                message = (
-                    f"Failed to dump table {schema_name}.{table_name}.\n"
-                    f"Return code: {result.returncode}\n"
-                    f"STDERR:\n{clean_stderr or '<empty>'}\n"
-                    f"STDOUT:\n{result.stdout.strip() or '<empty>'}"
-                )
-                sysmsg.critical(message)
-                raise RuntimeError(message)
+            # Run the command and capture stdout and stderr
+            result = subprocess.run(shell_text_command, stdout=subprocess.PIPE, stderr=subprocess.PIPE, text=True, shell=True)
+
+            # Check if there's a MySQL-specific warning
+            if result.stderr and 'Using a password on the command line interface can be insecure' not in result.stderr:
+                print('Error dumping table (full):', table_name)
+                print(result.stderr)
+                exit()
 
     #--------------------------------#
     # Method: Export table to folder #
@@ -2059,17 +1942,7 @@ class GraphDB():
     #----------------------------------------------#
     # Method: Import table definitions from folder #
     #----------------------------------------------#
-    def import_create_table(self, engine_name, schema_name, input_folder, include_keys=True, ignore_existing=False, verbose=False):
-
-        # Create the target schema if it does not exist
-        if not self.database_exists(engine_name=engine_name, schema_name=schema_name):
-            self.create_database(engine_name=engine_name, schema_name=schema_name)
-
-        # Check if table exists and ignore if requested
-        if not ignore_existing and self.table_exists(engine_name=engine_name, schema_name=schema_name, table_name=os.path.basename(input_folder)):
-            sysmsg.warning(f"Table {schema_name}.{os.path.basename(input_folder)} already exists. Flag 'ignore_existing' set to {ignore_existing}.")
-            sysmsg.warning("Table definition not imported.")
-            return
+    def import_create_table(self, engine_name, schema_name, input_folder, include_keys=True, ignore_existing=False):
 
         # Check if keys should be included
         file_path = f"{input_folder}/CREATE_TABLE.sql" if include_keys else f"{input_folder}/CREATE_TABLE_NO_KEYS.sql"
@@ -2085,12 +1958,12 @@ class GraphDB():
                     file.write(file_data)
 
         # Execute the SQL file
-        self.execute_query_from_file(engine_name=engine_name, database=schema_name, file_path=file_path, verbose=verbose)
+        self.execute_query_from_file(engine_name=engine_name, database=schema_name, file_path=file_path)
 
     #---------------------------------------#
     # Method: Import table data from folder #
     #---------------------------------------#
-    def import_table_data(self, engine_name, schema_name, input_folder, ignore_existing=False, verbose=False):
+    def import_table_data(self, engine_name, schema_name, input_folder, ignore_existing=False):
 
         # Get list of data files from the input folder
         list_of_sql_files = [p for p in sorted(glob.glob(f'{input_folder}/*.sql'))
@@ -2117,43 +1990,23 @@ class GraphDB():
                             file.write(file_data)
 
                 # Execute import query from SQL file
-                self.execute_query_from_file(engine_name=engine_name, database=schema_name, file_path=file_path, verbose=verbose)
+                self.execute_query_from_file(engine_name=engine_name, database=schema_name, file_path=file_path)
 
     #---------------------------------------------#
     # Method: Import/apply table keys from folder #
     #---------------------------------------------#
-    def import_table_keys(self, engine_name, schema_name, input_folder, verbose=False):
+    def import_table_keys(self, engine_name, schema_name, input_folder):
 
         # Check if keys should be included
         file_path = f"{input_folder}/CREATE_KEYS.sql"
 
-        # Open keys file
-        with open(file_path, 'r') as file:
-            sql_commands = file.read()
-
-        # Extract table name from SQL content
-        table_name = re.findall(r'ALTER\s+TABLE\s+`([^`]+)`', sql_commands, re.IGNORECASE)[0]
-
-        # Loop over key creation commands
-        for sql_command in sql_commands.split(';'):
-
-            # If command is empty, skip
-            if not sql_command.strip():
-                continue
-
-            # Extract key name from command
-            key_name_match = re.findall(r'\bADD\s+(?:UNIQUE\s+|FULLTEXT\s+|SPATIAL\s+)?(?:KEY|INDEX)\s+`([^`]+)`', sql_command, re.IGNORECASE)[0]
-
-            # Apply command if key doesn't exist
-            if not self.key_exists(engine_name=engine_name, schema_name=schema_name, table_name=table_name, key_name=key_name_match):
-                if verbose:
-                    sysmsg.info(f"\n🔑 Applying key '{key_name_match}' to table '{schema_name}.{table_name}' ...")
-                self.execute_query(engine_name=engine_name, schema_name=schema_name, query=sql_command, verbose=verbose)
+        # Execute the SQL file
+        self.execute_query_from_file(engine_name=engine_name, database=schema_name, file_path=file_path)
 
     #----------------------------------#
     # Method: Import table from folder #
     #----------------------------------#
-    def import_table(self, engine_name, schema_name, input_folder, create_keys_after_import=False, ignore_existing=False, verbose=False):
+    def import_table(self, engine_name, schema_name, input_folder, create_keys_after_import=False, ignore_existing=False):
 
         # Print messages only if not already printed by referring method
         if sys._getframe(1).f_code.co_name not in ['import_database', 'copy_table', 'copy_database']:
@@ -2171,14 +2024,14 @@ class GraphDB():
             sysmsg.info(f"⚙️  Importing table from input folder into '{engine_name}' engine ...")
 
         # Import the table definition
-        self.import_create_table(engine_name=engine_name, schema_name=schema_name, input_folder=input_folder, include_keys=not create_keys_after_import, ignore_existing=ignore_existing, verbose=verbose)
+        self.import_create_table(engine_name=engine_name, schema_name=schema_name, input_folder=input_folder, include_keys=not create_keys_after_import, ignore_existing=ignore_existing)
 
         # Import the table data
-        self.import_table_data(engine_name=engine_name, schema_name=schema_name, input_folder=input_folder, ignore_existing=ignore_existing, verbose=verbose)
+        self.import_table_data(engine_name=engine_name, schema_name=schema_name, input_folder=input_folder, ignore_existing=ignore_existing)
 
         # Import/apply the table keys
         if create_keys_after_import:
-            self.import_table_keys(engine_name=engine_name, schema_name=schema_name, input_folder=input_folder, verbose=verbose)
+            self.import_table_keys(engine_name=engine_name, schema_name=schema_name, input_folder=input_folder)
 
         # Print status message
         if sys._getframe(1).f_code.co_name not in ['import_database', 'copy_table', 'copy_database']:
@@ -2187,7 +2040,7 @@ class GraphDB():
     #-------------------------------------#
     # Method: Import database from folder #
     #-------------------------------------#
-    def import_database(self, engine_name, schema_name, input_folder, create_keys_after_import=False, ignore_existing=False, verbose=False):
+    def import_database(self, engine_name, schema_name, input_folder, create_keys_after_import=False, ignore_existing=False):
 
         # Print messages only if not already printed by referring method
         if sys._getframe(1).f_code.co_name not in ['copy_table', 'copy_database']:
@@ -2204,15 +2057,12 @@ class GraphDB():
             # Print status message
             sysmsg.info(f"⚙️  Importing database tables from input folder into '{engine_name}' engine ...")
 
-        # Create the database/schema if it does not exist
-        self.execute_query(engine_name=engine_name, query=f"CREATE DATABASE IF NOT EXISTS {schema_name}")
-
         # Get list of table subfolders
         list_of_table_folders = [f.path for f in os.scandir(input_folder) if f.is_dir()]
 
         # Import each table
         for table_folder in sorted(list_of_table_folders):
-            self.import_table(engine_name=engine_name, schema_name=schema_name, input_folder=table_folder, create_keys_after_import=create_keys_after_import, ignore_existing=ignore_existing, verbose=verbose)
+            self.import_table(engine_name=engine_name, schema_name=schema_name, input_folder=table_folder, create_keys_after_import=create_keys_after_import, ignore_existing=ignore_existing)
 
         # Print status message
         if sys._getframe(1).f_code.co_name not in ['copy_table', 'copy_database']:
@@ -2552,7 +2402,7 @@ class GraphDB():
         # -------------------------
         # Build comparison table rows
         # -------------------------
-        OK, WARN, ERR = "✅", "⚠️", "❌"
+        OK, WARN, ERR = "✅ ", "⚠️", "❌ "
 
         def _row(metric, a, b, formatter, sev_on_diff):
             if a == b:
@@ -2671,43 +2521,42 @@ class GraphDB():
     #------------------------------------------#
     def json_file_to_sql_file(self, json_file_path, sql_file_path, schema_name, table_name, include_file_id=False):
 
+        # Get file id from the file path
         file_id = os.path.basename(json_file_path).split('.')[0]
 
-        with open(json_file_path, 'r', encoding='utf-8') as file:
+        # Get the JSON list from file
+        with open(json_file_path, 'r') as file:
             json_list = json.load(file)
 
+        # Check if the JSON list is empty
         if not json_list:
             return False
 
+        # Get the column names from json keys
         column_names = list(json_list[0].keys())
-        insert_columns = (["file_id"] if include_file_id else []) + column_names
 
-        def sql_value(value):
-            if value is None:
-                return "NULL"
-            if isinstance(value, (dict, list)):
-                value = json.dumps(value, ensure_ascii=False)
-            return json.dumps(str(value), ensure_ascii=False)
+        # Generate column names string
+        column_names_str = ', '.join(['file_id'] + column_names)
 
-        values_rows = []
+        # Initialize the SQL INSERTS
+        sql_inserts = f"INSERT INTO {schema_name}.{table_name} ({column_names_str}) VALUES "
+
+        # Loop over the JSON list
         for row in json_list:
-            values = []
-            if include_file_id:
-                values.append(sql_value(file_id))
-            values.extend(sql_value(row.get(column)) for column in column_names)
-            values_rows.append(f"({', '.join(values)})")
 
-        sql_inserts = (
-            f"INSERT INTO {self._qt(schema_name, table_name)} "
-            f"({', '.join(self._q(c) for c in insert_columns)}) VALUES\n"
-            + ",\n".join(values_rows)
-            + ";\n"
-        )
+            # Generate values string
+            values_str = ', '.join([file_id] + [f'"{row[column]}"' for column in column_names])
 
-        with open(sql_file_path, 'w', encoding='utf-8') as file:
+            # Append the SQL INSERT statement
+            sql_inserts += f"({values_str}),"
+
+        # Replace the trailing comma with a semicolon
+        if sql_inserts.endswith(','):
+            sql_inserts = sql_inserts[:-1] + ';'
+
+        # Write the SQL INSERTS to file
+        with open(sql_file_path, 'w') as file:
             file.write(sql_inserts)
-
-        return True
 
     #-----------------------------------------------#
     # Method: Compare two tables by random sampling #
@@ -2763,7 +2612,7 @@ class GraphDB():
                 sql_query_stack = []
                 for colval in partition_column_possible_vals:
                     sql_query_stack += [
-                        f"(SELECT {', '.join(primary_keys)} FROM {schema_name}.{table_name} WHERE object_type = '{colval}' ORDER BY RAND() LIMIT {round(sample_size/len(partition_column_possible_vals))})",
+                        f"(SELECT {', '.join(primary_keys)} FROM {schema_name}.{table_name} WHERE object_type = '{colval}' ORDER BY RAND() LIMIT {round(sample_size/len(object_types))})",
                     ]
                 sql_query = ' UNION ALL '.join(sql_query_stack)
 
@@ -2813,13 +2662,13 @@ class GraphDB():
     def compare_tables_by_random_sampling(self, source_engine_name, source_schema_name, source_table_name, target_engine_name, target_schema_name, target_table_name, sample_size=1024):
 
         # Check if the source table exists
-        if not self.table_exists(engine_name=source_engine_name, schema_name=source_schema_name, table_name=source_table_name):
-            sysmsg.error(f"🚨 Table {source_schema_name}.{source_table_name} does not exist in '{source_engine_name}'.")
+        if not self.table_exists(engine_name=source_engine_name, schema_name=source_schema_name, table_name=target_table_name):
+            sysmsg.error(f"🚨 Table {source_schema_name}.{target_table_name} does not exist in '{source_engine_name}'.")
             return
 
         # Check if the target table exists
-        if not self.table_exists(engine_name=target_engine_name, schema_name=target_schema_name, table_name=target_table_name):
-            sysmsg.error(f"🚨 Table {target_schema_name}.{target_table_name} does not exist in '{target_engine_name}'.")
+        if not self.table_exists(engine_name=target_engine_name, schema_name=target_schema_name, table_name=source_table_name):
+            sysmsg.error(f"🚨 Table {target_schema_name}.{source_table_name} does not exist in '{target_engine_name}'.")
             return
 
         # Detect table type
