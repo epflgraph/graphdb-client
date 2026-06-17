@@ -13,6 +13,9 @@ RUN apt-get update \
     && apt-get install -y --no-install-recommends default-mysql-client \
     && rm -rf /var/lib/apt/lists/*
 
+# Docker CLI tools are required by the docker import/export code paths.
+RUN apt-get update && apt-get install -y docker.io && rm -rf /var/lib/apt/lists/*
+
 # Copy packaging metadata first so dependency installation can be cached
 # when only application source code changes.
 COPY pyproject.toml README.md LICENSE /app/
