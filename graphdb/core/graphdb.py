@@ -1138,7 +1138,7 @@ class GraphDB():
 
         if isinstance(value, str):
             stripped = value.strip()
-            if stripped in {"None", "NULL", "null", "NaN", "nan"}:
+            if stripped in {"NULL", "null", "NaN", "nan"}: # fix: 3ghj54
                 return None
             return value
 
