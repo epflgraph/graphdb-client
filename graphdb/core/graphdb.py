@@ -2127,12 +2127,23 @@ class GraphDB():
         # Check if keys should be included
         file_path = f"{input_folder}/CREATE_KEYS.sql"
 
+        # If no keys file exists, there is nothing to do
+        if not os.path.isfile(file_path):
+            if verbose:
+                sysmsg.info(f"\n🔑 No CREATE_KEYS.sql found in '{input_folder}'. Skipping key import.")
+            return
+
         # Open keys file
         with open(file_path, 'r') as file:
             sql_commands = file.read()
 
         # Extract table name from SQL content
-        table_name = re.findall(r'ALTER\s+TABLE\s+`([^`]+)`', sql_commands, re.IGNORECASE)[0]
+        table_name_matches = re.findall(r'ALTER\s+TABLE\s+`([^`]+)`', sql_commands, re.IGNORECASE)
+        if not table_name_matches:
+            if verbose:
+                sysmsg.info(f"\n🔑 No ALTER TABLE statements in '{file_path}'. Skipping key import.")
+            return
+        table_name = table_name_matches[0]
 
         # Loop over key creation commands
         for sql_command in sql_commands.split(';'):
@@ -2142,7 +2153,10 @@ class GraphDB():
                 continue
 
             # Extract key name from command
-            key_name_match = re.findall(r'\bADD\s+(?:UNIQUE\s+|FULLTEXT\s+|SPATIAL\s+)?(?:KEY|INDEX)\s+`([^`]+)`', sql_command, re.IGNORECASE)[0]
+            key_name_matches = re.findall(r'\bADD\s+(?:UNIQUE\s+|FULLTEXT\s+|SPATIAL\s+)?(?:KEY|INDEX)\s+`([^`]+)`', sql_command, re.IGNORECASE)
+            if not key_name_matches:
+                continue
+            key_name_match = key_name_matches[0]
 
             # Apply command if key doesn't exist
             if not self.key_exists(engine_name=engine_name, schema_name=schema_name, table_name=table_name, key_name=key_name_match):
