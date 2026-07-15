@@ -1,0 +1,82 @@
+services:
+  mysql-nossl:
+    image: mysql:8.0
+    container_name: graphdb-test-mysql-nossl
+    hostname: graphdb-test-mysql-nossl
+    environment:
+      MYSQL_ROOT_PASSWORD: rootpass
+      MYSQL_USER: graphdb
+      MYSQL_PASSWORD: graphdb
+    ports:
+      - "13306:3306"
+    networks:
+      - graphdb-test
+    healthcheck:
+      test: ["CMD", "mysqladmin", "ping", "-h", "localhost", "-u", "root", "-prootpass"]
+      interval: 5s
+      timeout: 5s
+      retries: 10
+
+  mysql-ssl:
+    image: mysql:8.0
+    container_name: graphdb-test-mysql-ssl
+    hostname: graphdb-test-mysql-ssl
+    environment:
+      MYSQL_ROOT_PASSWORD: rootpass
+      MYSQL_USER: graphdb
+      MYSQL_PASSWORD: graphdb
+    ports:
+      - "13307:3306"
+    volumes:
+      - ./certs:/etc/mysql/ssl:ro
+      - ./mysql-ssl.cnf:/etc/mysql/conf.d/ssl.cnf:ro
+    networks:
+      - graphdb-test
+    healthcheck:
+      test: ["CMD", "mysqladmin", "ping", "-h", "localhost", "-u", "root", "-prootpass"]
+      interval: 5s
+      timeout: 5s
+      retries: 10
+
+  mariadb-nossl:
+    image: mariadb:11
+    container_name: graphdb-test-mariadb-nossl
+    hostname: graphdb-test-mariadb-nossl
+    environment:
+      MARIADB_ROOT_PASSWORD: rootpass
+      MARIADB_USER: graphdb
+      MARIADB_PASSWORD: graphdb
+    ports:
+      - "13308:3306"
+    networks:
+      - graphdb-test
+    healthcheck:
+      test: ["CMD", "mariadb-admin", "ping", "-h", "localhost", "-u", "root", "-prootpass"]
+      interval: 5s
+      timeout: 5s
+      retries: 10
+
+  mariadb-ssl:
+    image: mariadb:11
+    container_name: graphdb-test-mariadb-ssl
+    hostname: graphdb-test-mariadb-ssl
+    environment:
+      MARIADB_ROOT_PASSWORD: rootpass
+      MARIADB_USER: graphdb
+      MARIADB_PASSWORD: graphdb
+    ports:
+      - "13309:3306"
+    volumes:
+      - ./certs:/etc/mysql/ssl:ro
+      - ./mariadb-ssl.cnf:/etc/mysql/conf.d/ssl.cnf:ro
+    networks:
+      - graphdb-test
+    healthcheck:
+      test: ["CMD", "mariadb-admin", "ping", "-h", "localhost", "-u", "root", "-prootpass"]
+      interval: 5s
+      timeout: 5s
+      retries: 10
+
+networks:
+  graphdb-test:
+    name: graphdb-test

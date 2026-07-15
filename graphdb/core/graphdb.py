@@ -1230,10 +1230,10 @@ class GraphDB():
 
         # Drop the target table if it exists
         if drop_table:
-            self.execute_query(engine_name=engine_name, query=f"DROP TABLE IF EXISTS {target_schema_name}.{target_table_name}")
+            self.execute_query(engine_name=engine_name, query=f"DROP TABLE IF EXISTS {target_schema_name}.{target_table_name}", commit=True)
 
         # Execute the CREATE TABLE query
-        self.execute_query(engine_name=engine_name, query=f"CREATE TABLE IF NOT EXISTS {target_schema_name}.{target_table_name} LIKE {source_schema_name}.{source_table_name}")
+        self.execute_query(engine_name=engine_name, query=f"CREATE TABLE IF NOT EXISTS {target_schema_name}.{target_table_name} LIKE {source_schema_name}.{source_table_name}", commit=True)
 
         # Drop all keys in the target table
         if drop_keys:
@@ -1299,14 +1299,20 @@ class GraphDB():
         if drop_table:
             self.drop_table(engine_name=target_engine_name, schema_name=target_schema_name, table_name=target_table_name)
 
-        # Use the target database
-        self.execute_query(engine_name=target_engine_name, query=f'USE {target_schema_name}')
-
-        # Fix missing namespace in the create table SQL
-        create_table_sql = create_table_sql.replace("CREATE TABLE ", f"CREATE TABLE {target_schema_name}.")
+        # Rewrite the CREATE TABLE statement so it points at the requested
+        # target schema and table name.  The source DDL returned by
+        # SHOW CREATE TABLE always begins with:
+        #   CREATE TABLE `<table_name>` (
+        import re
+        create_table_sql = re.sub(
+            r"CREATE TABLE\s+`([^`]+)`",
+            f"CREATE TABLE `{target_schema_name}`.`{target_table_name}`",
+            create_table_sql,
+            count=1,
+        )
 
         # Execute the create table SQL
-        self.execute_query(engine_name=target_engine_name, query=create_table_sql)
+        self.execute_query(engine_name=target_engine_name, query=create_table_sql, commit=True)
 
         # Drop all keys in the target table
         if drop_keys:

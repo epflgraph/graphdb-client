@@ -1,0 +1,18 @@
+# Generated certificates
+/certs/*.pem
+/certs/*.srl
+
+# Generated configs
+/configs/*.yaml
+
+# Extracted client binaries
+/bin/mysql/*
+/bin/mariadb/*
+!/bin/mysql/.gitkeep
+!/bin/mariadb/.gitkeep
+
+# Runtime exports
+/exports/
+
+# Bundled config variants created at runtime
+/configs/*_bundled.yaml
