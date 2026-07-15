@@ -129,7 +129,8 @@ cli_definitions: Dict[str, Any] = {
             dict(flags = ('--filter_by'    ,), kwargs = dict(required=False, type=str, default='TRUE',  help="Filter condition to apply to all tables.")),
             dict(flags = ('--chunk_size'   ,), kwargs = dict(required=False, type=int, default=10000, help="Number of documents to export per batch (default=10000).")),
             dict(flags = ('--include_create_tables', '-c'), kwargs = dict(action='store_true', default=False, help="Include table definitions in export.")),
-            dict(flags = ('--include_data'         , '-d'), kwargs = dict(action='store_true', default=False, help="Include data in export."))
+            dict(flags = ('--include_data'         , '-d'), kwargs = dict(action='store_true', default=False, help="Include data in export.")),
+            dict(flags = ('--compress'             , '-z'), kwargs = dict(action='store_true', default=False, help="Compress exported SQL chunks with gzip as .sql.gz."))
         ],
         common_args_order = ['env'],
     ),
@@ -151,6 +152,7 @@ cli_definitions: Dict[str, Any] = {
             dict(flags = ('--include_data'         , '-d'), kwargs = dict(action='store_true', default=False, help="Include data in import.")),
             dict(flags = ('--ignore_existing'      , '-i'), kwargs = dict(action='store_true', default=False, help="Soft ignore table creation and existing rows.")),
             dict(flags = ('--verbose'              , '-v'), kwargs = dict(action='store_true', default=False, help="Verbose mode.")),
+            dict(flags = ('--compress'             , '-z'), kwargs = dict(action='store_true', default=False, help="Import gzip-compressed .sql.gz data files.")),
         ],
         common_args_order = ['env'],
     ),
@@ -169,6 +171,7 @@ cli_definitions: Dict[str, Any] = {
             dict(flags = ('--to_schema'  ,), kwargs = dict(required=True,  type=str, help="Name of the target database/schema to copy to.")),
             dict(flags = ('--table_name' ,), kwargs = dict(required=False, type=str, default=None,    help="Name of the table to export (optional).")),
             dict(flags = ('--chunk_size' ,), kwargs = dict(required=False, type=int, default=10000, help="Number of rows to copy per batch (default=10000).")),
+            dict(flags = ('--compress' , '-z'), kwargs = dict(action='store_true', default=False, help="Compress exported SQL chunks with gzip as .sql.gz to save disk space.")),
         ],
         common_args_order = [],
     ),
@@ -186,7 +189,8 @@ cli_definitions: Dict[str, Any] = {
             dict(flags = ('--from_schema',), kwargs = dict(required=True,  type=str, help="Name of the source database/schema to compare.")),
             dict(flags = ('--to_schema'  ,), kwargs = dict(required=True,  type=str, help="Name of the target database/schema to compare.")),
             dict(flags = ('--table_name' ,), kwargs = dict(required=False, type=str, default=None, help="Name of the table to compare (if comparing only one table).")),
-            dict(flags = ('--exact_row_count', '-e'), kwargs = dict(action='store_true', default=False, help="Calculate exact row counts (slower)."))
+            dict(flags = ('--row_count_tolerance',), kwargs = dict(required=False, type=float, default=0.10, help="Relative row-count difference below which a mismatch is reported as a warning instead of an error (default: 0.10 for 10%%).")),
+            dict(flags = ('--ignore_warnings', '-iw'), kwargs = dict(action='store_true', default=False, help="Skip output for tables that have only warnings and no errors."))
         ],
         common_args_order = [],
     )

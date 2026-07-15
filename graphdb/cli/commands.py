@@ -175,6 +175,7 @@ def cmd_export(args):
     t = args.table_name is not None
     c = args.include_create_tables
     d = args.include_data
+    z = args.compress
 
     #------------------#
     # Execute commands #
@@ -198,7 +199,8 @@ def cmd_export(args):
             output_folder = args.output_folder,
             filter_by     = args.filter_by,
             chunk_size    = args.chunk_size,
-            include_create_tables = c
+            include_create_tables = c,
+            compress      = z,
         )
 
     # Export MySQL table definitions for entire database
@@ -217,7 +219,8 @@ def cmd_export(args):
             output_folder = args.output_folder,
             filter_by     = args.filter_by,
             chunk_size    = args.chunk_size,
-            include_create_tables = c
+            include_create_tables = c,
+            compress      = z,
         )
 
     # Nothing to do
@@ -248,6 +251,7 @@ def cmd_import(args):
     d = args.include_data
     i = args.ignore_existing
     v = args.verbose
+    z = args.compress
 
     #------------------#
     # Execute commands #
@@ -272,7 +276,8 @@ def cmd_import(args):
             input_folder = f"{args.input_folder}/{args.table_name}",
             create_keys_after_import = True,
             ignore_existing = i,
-            verbose = v
+            verbose = v,
+            compress = z,
         )
 
     # Import MySQL table definitions and data for entire database
@@ -283,7 +288,8 @@ def cmd_import(args):
             input_folder = args.input_folder,
             create_keys_after_import = True,
             ignore_existing = i,
-            verbose = v
+            verbose = v,
+            compress = z,
         )
 
     # Nothing to do
@@ -324,7 +330,8 @@ def cmd_copy(args):
             target_schema_name   = args.to_schema,
             table_name           = args.table_name,
             chunk_size           = args.chunk_size,
-            create_keys_after_import = True
+            create_keys_after_import = True,
+            compress             = args.compress,
         )
     else:
         db.copy_database(
@@ -333,7 +340,8 @@ def cmd_copy(args):
             target_engine_name   = args.to_env,
             target_schema_name   = args.to_schema,
             chunk_size           = args.chunk_size,
-            create_keys_after_import = True
+            create_keys_after_import = True,
+            compress             = args.compress,
         )
 
     # Print footers
@@ -356,7 +364,8 @@ def cmd_compare(args):
 
     # Get import options
     t = args.table_name is not None
-    e = args.exact_row_count
+    tol = args.row_count_tolerance
+    ignore_warnings = args.ignore_warnings
 
     #------------------#
     # Execute commands #
@@ -370,7 +379,8 @@ def cmd_compare(args):
             target_engine_name   = args.to_env,
             target_schema_name   = args.to_schema,
             table_name           = args.table_name,
-            exact_row_count      = e
+            row_count_tolerance  = tol,
+            ignore_warnings      = ignore_warnings,
         )
     else:
         db.compare_databases(
@@ -378,7 +388,8 @@ def cmd_compare(args):
             source_schema_name   = args.from_schema,
             target_engine_name   = args.to_env,
             target_schema_name   = args.to_schema,
-            exact_row_count      = e
+            row_count_tolerance  = tol,
+            ignore_warnings      = ignore_warnings,
         )
 
     # Print footers

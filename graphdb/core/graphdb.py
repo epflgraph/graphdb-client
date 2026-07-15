@@ -10,7 +10,7 @@ from pathlib import Path
 import numpy as np
 import pandas as pd
 from tabulate import tabulate
-import sys, os, re, subprocess, json, datetime, hashlib, random, glob, time, rich, ssl, shlex
+import sys, os, re, subprocess, json, datetime, hashlib, random, glob, time, rich, ssl, shlex, shutil, gzip, tempfile, types
 from graphdb.core.config import GraphDBConfig, GraphDBConfigError
 from graphdb.models.sqlquery import print_sql
 
@@ -1040,13 +1040,8 @@ class GraphDB():
         if database:
             shell_command.append(database)
 
-        # Read the SQL file content
-        with open(abs_file_path, "r", encoding="utf-8") as sql_file:
-            sql_text = sql_file.read()
-
-        # Check if there's an actual SQL command in file content
-        # If not, issue warning and return
-        if not sql_text.strip():
+        # Check if the file is empty before streaming
+        if os.path.getsize(abs_file_path) == 0:
             print(f"⚠️  SQL file is empty: {abs_file_path}")
             return False
 
@@ -1056,26 +1051,55 @@ class GraphDB():
             print("Executing command:")
             print(shell_command)
             print('\n')
-            print("with SQL text:")
-            print(sql_text)
+            print(f"Streaming SQL from file: {abs_file_path}")
             print('\n')
 
         # If verbose is enabled, add the flag to show warnings in the mysql command output
         if verbose:
             shell_command += ["--show-warnings"]
 
-        # Read the SQL file content and execute it via subprocess, passing the SQL text through stdin
+        # Stream the SQL file into mysql via a native pipe (gzip -dc ... | mysql ...).
+        # This avoids Python in the data path and is much faster than Python streaming.
+        # stdout/stderr are redirected to temp files so we can't deadlock on full pipes.
         try:
+            with tempfile.TemporaryFile() as stdout_file, tempfile.TemporaryFile() as stderr_file:
+                if abs_file_path.endswith('.gz'):
+                    reader_cmd = ['gzip', '-dc', abs_file_path]
+                else:
+                    reader_cmd = ['cat', abs_file_path]
 
-            # Execute the SQL command via subprocess, passing the SQL text through stdin
-            result = subprocess.run(
-                shell_command,
-                input=sql_text,
-                stdout=subprocess.PIPE,
-                stderr=subprocess.PIPE,
-                text=True,
-                env=self.subprocess_env.get(engine_name),
-            )
+                reader_proc = subprocess.Popen(
+                    reader_cmd,
+                    stdout=subprocess.PIPE,
+                    stderr=subprocess.PIPE,
+                )
+                mysql_proc = subprocess.Popen(
+                    shell_command,
+                    stdin=reader_proc.stdout,
+                    stdout=stdout_file,
+                    stderr=stderr_file,
+                    text=False,
+                    env=self.subprocess_env.get(engine_name),
+                )
+                reader_proc.stdout.close()
+
+                mysql_returncode = mysql_proc.wait()
+                reader_stdout, reader_stderr = reader_proc.communicate()
+
+                stdout_file.seek(0)
+                stdout_bytes = stdout_file.read()
+                stderr_file.seek(0)
+                stderr_bytes = stderr_file.read() + reader_stderr
+
+                # SIGPIPE (-13) from the reader is expected when mysql closes stdin early.
+                # Only report a reader failure if it's something other than SIGPIPE.
+                if reader_proc.returncode not in (0, -13):
+                    raise RuntimeError(
+                        f"Failed to read SQL file: {abs_file_path} "
+                        f"(reader return code: {reader_proc.returncode})"
+                    )
+
+                returncode = mysql_returncode
 
         # Handle file reading errors and subprocess execution errors separately for clearer diagnostics
         except OSError as exc:
@@ -1083,7 +1107,6 @@ class GraphDB():
             print(str(exc))
             raise RuntimeError(f"Failed to open SQL file: {abs_file_path}") from exc
 
-        # Note: subprocess.run can raise a CalledProcessError if the command returns a non-zero exit status and check=True is used, but since we're not using check=True, it will not raise an exception for non-zero exit codes. However, it can still raise exceptions for other issues (e.g., if the mysql command is not found), which we catch here.
         except Exception as exc:
             print(f"Failed to execute mysql command for file: {abs_file_path}")
             print(str(exc))
@@ -1091,8 +1114,10 @@ class GraphDB():
 
         # Process the result and handle stderr, ignoring the common password warning
         warn = "mysql: [Warning] Using a password on the command line interface can be insecure."
+        stderr_text = stderr_bytes.decode('utf-8', errors='replace')
+        stdout_text = stdout_bytes.decode('utf-8', errors='replace')
         stderr_lines = [
-            line for line in result.stderr.splitlines()
+            line for line in stderr_text.splitlines()
             if line.strip() and line.strip() != warn
         ]
 
@@ -1101,7 +1126,7 @@ class GraphDB():
 
             # Print the executed command and return code
             print(f"\nmysql command: {' '.join(shell_command)}")
-            print(f"return code: {result.returncode}")
+            print(f"return code: {returncode}")
 
             # Print stderr if there are any lines to show
             if stderr_lines:
@@ -1109,9 +1134,9 @@ class GraphDB():
                 print("\n".join(stderr_lines))
 
             # Print stdout if there is any output
-            if result.stdout.strip():
+            if stdout_text.strip():
                 print("\nstdout:")
-                print(result.stdout)
+                print(stdout_text)
 
         else:
             # If not verbose but there are stderr lines (other than the ignored warning), print them with the file path for context
@@ -1120,11 +1145,11 @@ class GraphDB():
                 print("\n".join(stderr_lines))
 
         # Check the return code to determine success or failure of the command execution
-        if result.returncode != 0:
+        if returncode != 0:
             raise RuntimeError(f"mysql command failed for file: {abs_file_path}")
 
-        # If we reach this point, the command executed successfully (return code 0), so we return True
-        return result
+        # If we reach this point, the command executed successfully (return code 0), so we return a result object
+        return types.SimpleNamespace(returncode=returncode, stdout=stdout_text, stderr=stderr_text)
 
     #--------------------------------------------#
     # Method: Execute a single-row upsert safely #
@@ -1838,7 +1863,7 @@ class GraphDB():
     #-------------------------------------#
     # Method: Export table data to folder #
     #-------------------------------------#
-    def export_table_data(self, engine_name, schema_name, table_name, output_folder, filter_by='TRUE', chunk_size=1000000):
+    def export_table_data(self, engine_name, schema_name, table_name, output_folder, filter_by='TRUE', chunk_size=1000000, compress=False):
 
         # Append schema and table name to output folder
         output_folder = f"{output_folder}/{schema_name}/{table_name}"
@@ -1890,10 +1915,16 @@ class GraphDB():
                     pb.set_description(f"⚙️  Table: {table_name}".ljust(PBWIDTH)[:PBWIDTH])
 
                     # Generate output file path
-                    output_file = f'{output_folder}/{table_name}_{str(offset).zfill(10)}.sql'
+                    if compress:
+                        output_file = f'{output_folder}/{table_name}_{str(offset).zfill(10)}.sql.gz'
+                        # Avoid re-exporting an existing plain SQL file too
+                        existing_plain = output_file[:-3]
+                    else:
+                        output_file = f'{output_folder}/{table_name}_{str(offset).zfill(10)}.sql'
+                        existing_plain = output_file
 
                     # Check if the output file already exists
-                    if os.path.exists(output_file):
+                    if os.path.exists(output_file) or os.path.exists(existing_plain):
                         continue
 
                     # Generate shell command to dump table chunck using mysqldump executable
@@ -1901,37 +1932,69 @@ class GraphDB():
                         schema_name,
                         table_name,
                         f'--where={filter_by} AND (row_id BETWEEN {offset} AND {offset + chunk_size - 1})',
-                    ] + ['--result-file=' + output_file]
+                    ]
 
-                    # Generate shell text command
                     # Run the command and capture stdout and stderr
-                    result = subprocess.run(
-                        shell_command,
-                        stdout=subprocess.PIPE,
-                        stderr=subprocess.PIPE,
-                        text=True,
-                        env=self.subprocess_env.get(engine_name),
-                    )
-
-                    clean_stderr = _clean_dump_stderr(result.stderr)
-                    if result.returncode != 0:
-                        message = (
-                            f"Failed to dump table chunk {schema_name}.{table_name} (offset={offset}).\n"
-                            f"Return code: {result.returncode}\n"
-                            f"STDERR:\n{clean_stderr or '<empty>'}\n"
-                            f"STDOUT:\n{result.stdout.strip() or '<empty>'}"
+                    if compress:
+                        proc = subprocess.Popen(
+                            shell_command,
+                            stdout=subprocess.PIPE,
+                            stderr=subprocess.PIPE,
+                            env=self.subprocess_env.get(engine_name),
                         )
-                        sysmsg.critical(message)
-                        raise RuntimeError(message)
+                        try:
+                            with gzip.open(output_file, 'wb', compresslevel=6) as gz_out:
+                                while True:
+                                    chunk = proc.stdout.read(65536)
+                                    if not chunk:
+                                        break
+                                    gz_out.write(chunk)
+                        finally:
+                            stderr_bytes = proc.stderr.read()
+                            result = proc.wait()
+                        clean_stderr = _clean_dump_stderr(stderr_bytes.decode('utf-8', errors='replace'))
+                        if result != 0:
+                            message = (
+                                f"Failed to dump table chunk {schema_name}.{table_name} (offset={offset}).\n"
+                                f"Return code: {result}\n"
+                                f"STDERR:\n{clean_stderr or '<empty>'}\n"
+                                f"STDOUT:\n<captured into gzip file>"
+                            )
+                            sysmsg.critical(message)
+                            raise RuntimeError(message)
+                    else:
+                        shell_command = shell_command + ['--result-file=' + output_file]
+                        result = subprocess.run(
+                            shell_command,
+                            stdout=subprocess.PIPE,
+                            stderr=subprocess.PIPE,
+                            text=True,
+                            env=self.subprocess_env.get(engine_name),
+                        )
+                        clean_stderr = _clean_dump_stderr(result.stderr)
+                        if result.returncode != 0:
+                            message = (
+                                f"Failed to dump table chunk {schema_name}.{table_name} (offset={offset}).\n"
+                                f"Return code: {result.returncode}\n"
+                                f"STDERR:\n{clean_stderr or '<empty>'}\n"
+                                f"STDOUT:\n{result.stdout.strip() or '<empty>'}"
+                            )
+                            sysmsg.critical(message)
+                            raise RuntimeError(message)
 
         # Else, if row_id does not exist, dump the entire table at once
         else:
 
             # Generate output file path
-            output_file = f'{output_folder}/{table_name}_FULL.sql'
+            if compress:
+                output_file = f'{output_folder}/{table_name}_FULL.sql.gz'
+                existing_plain = output_file[:-3]
+            else:
+                output_file = f'{output_folder}/{table_name}_FULL.sql'
+                existing_plain = output_file
 
             # Check if the output file already exists
-            if os.path.exists(output_file):
+            if os.path.exists(output_file) or os.path.exists(existing_plain):
                 sysmsg.warning(f"Output file {output_file} already exists. Skipping dump for table '{table_name}'.")
                 return
 
@@ -1940,34 +2003,60 @@ class GraphDB():
                 schema_name,
                 table_name,
                 f'--where={filter_by}',
-                f'--result-file={output_file}'
             ]
 
-            # Generate shell text command
             # Run the command and capture stdout and stderr
-            result = subprocess.run(
-                shell_command,
-                stdout=subprocess.PIPE,
-                stderr=subprocess.PIPE,
-                text=True,
-                env=self.subprocess_env.get(engine_name),
-            )
-
-            clean_stderr = _clean_dump_stderr(result.stderr)
-            if result.returncode != 0:
-                message = (
-                    f"Failed to dump table {schema_name}.{table_name}.\n"
-                    f"Return code: {result.returncode}\n"
-                    f"STDERR:\n{clean_stderr or '<empty>'}\n"
-                    f"STDOUT:\n{result.stdout.strip() or '<empty>'}"
+            if compress:
+                proc = subprocess.Popen(
+                    shell_command,
+                    stdout=subprocess.PIPE,
+                    stderr=subprocess.PIPE,
+                    env=self.subprocess_env.get(engine_name),
                 )
-                sysmsg.critical(message)
-                raise RuntimeError(message)
+                try:
+                    with gzip.open(output_file, 'wb', compresslevel=6) as gz_out:
+                        while True:
+                            chunk = proc.stdout.read(65536)
+                            if not chunk:
+                                break
+                            gz_out.write(chunk)
+                finally:
+                    stderr_bytes = proc.stderr.read()
+                    result = proc.wait()
+                clean_stderr = _clean_dump_stderr(stderr_bytes.decode('utf-8', errors='replace'))
+                if result != 0:
+                    message = (
+                        f"Failed to dump table {schema_name}.{table_name}.\n"
+                        f"Return code: {result}\n"
+                        f"STDERR:\n{clean_stderr or '<empty>'}\n"
+                        f"STDOUT:\n<captured into gzip file>"
+                    )
+                    sysmsg.critical(message)
+                    raise RuntimeError(message)
+            else:
+                shell_command = shell_command + [f'--result-file={output_file}']
+                result = subprocess.run(
+                    shell_command,
+                    stdout=subprocess.PIPE,
+                    stderr=subprocess.PIPE,
+                    text=True,
+                    env=self.subprocess_env.get(engine_name),
+                )
+                clean_stderr = _clean_dump_stderr(result.stderr)
+                if result.returncode != 0:
+                    message = (
+                        f"Failed to dump table {schema_name}.{table_name}.\n"
+                        f"Return code: {result.returncode}\n"
+                        f"STDERR:\n{clean_stderr or '<empty>'}\n"
+                        f"STDOUT:\n{result.stdout.strip() or '<empty>'}"
+                    )
+                    sysmsg.critical(message)
+                    raise RuntimeError(message)
 
     #--------------------------------#
     # Method: Export table to folder #
     #--------------------------------#
-    def export_table(self, engine_name, schema_name, table_name, output_folder, filter_by='TRUE', chunk_size=1000000, include_create_tables=False):
+    def export_table(self, engine_name, schema_name, table_name, output_folder, filter_by='TRUE', chunk_size=1000000, include_create_tables=False, compress=False):
 
         # Print messages only if not already printed by referring method
         if sys._getframe(1).f_code.co_name not in ['export_database', 'copy_table', 'copy_database']:
@@ -1994,7 +2083,7 @@ class GraphDB():
             self.export_create_table(engine_name=engine_name, schema_name=schema_name, table_name=table_name, output_folder=output_folder)
 
         # Export data to output folder
-        self.export_table_data(engine_name=engine_name, schema_name=schema_name, table_name=table_name, output_folder=output_folder, filter_by=filter_by, chunk_size=chunk_size)
+        self.export_table_data(engine_name=engine_name, schema_name=schema_name, table_name=table_name, output_folder=output_folder, filter_by=filter_by, chunk_size=chunk_size, compress=compress)
 
         # Print status message
         if sys._getframe(1).f_code.co_name not in ['export_database', 'copy_table', 'copy_database']:
@@ -2010,14 +2099,14 @@ class GraphDB():
     #-----------------------------------------------------#
     # Method: Export all table data in database to folder #
     #-----------------------------------------------------#
-    def export_table_data_in_database(self, engine_name, schema_name, output_folder, filter_by='TRUE', chunk_size=1000000):
+    def export_table_data_in_database(self, engine_name, schema_name, output_folder, filter_by='TRUE', chunk_size=1000000, compress=False):
         for table_name in self.get_tables_in_schema(engine_name=engine_name, schema_name=schema_name):
-            self.export_table_data(engine_name=engine_name, schema_name=schema_name, table_name=table_name, output_folder=output_folder, filter_by=filter_by, chunk_size=chunk_size)
+            self.export_table_data(engine_name=engine_name, schema_name=schema_name, table_name=table_name, output_folder=output_folder, filter_by=filter_by, chunk_size=chunk_size, compress=compress)
 
     #-----------------------------------------------------#
     # Method: Export all table data in database to folder #
     #-----------------------------------------------------#
-    def export_database(self, engine_name, schema_name, output_folder, filter_by='TRUE', chunk_size=1000000, include_create_tables=False):
+    def export_database(self, engine_name, schema_name, output_folder, filter_by='TRUE', chunk_size=1000000, include_create_tables=False, compress=False):
 
         # Print messages only if not already printed by referring method
         if sys._getframe(1).f_code.co_name not in ['copy_table', 'copy_database']:
@@ -2043,7 +2132,7 @@ class GraphDB():
 
         # Export all tables
         for table_name in sorted(list_of_tables):
-            self.export_table(engine_name=engine_name, schema_name=schema_name, table_name=table_name, output_folder=output_folder, filter_by=filter_by, chunk_size=chunk_size, include_create_tables=include_create_tables)
+            self.export_table(engine_name=engine_name, schema_name=schema_name, table_name=table_name, output_folder=output_folder, filter_by=filter_by, chunk_size=chunk_size, include_create_tables=include_create_tables, compress=compress)
 
         # Print status message
         if sys._getframe(1).f_code.co_name not in ['copy_table', 'copy_database']:
@@ -2090,11 +2179,20 @@ class GraphDB():
     #---------------------------------------#
     # Method: Import table data from folder #
     #---------------------------------------#
-    def import_table_data(self, engine_name, schema_name, input_folder, ignore_existing=False, verbose=False):
+    def import_table_data(self, engine_name, schema_name, input_folder, ignore_existing=False, verbose=False, compress=False):
 
-        # Get list of data files from the input folder
-        list_of_sql_files = [p for p in sorted(glob.glob(f'{input_folder}/*.sql'))
-                            if os.path.basename(p) not in ('CREATE_KEYS.sql', 'CREATE_TABLE_NO_KEYS.sql', 'CREATE_TABLE.sql')]
+        # Get list of data files from the input folder (plain or gzip-compressed SQL)
+        if compress:
+            list_of_sql_files = sorted(glob.glob(f'{input_folder}/*.sql.gz'))
+            list_of_sql_files = [p for p in list_of_sql_files
+                                if os.path.basename(p) not in ('CREATE_KEYS.sql.gz', 'CREATE_TABLE_NO_KEYS.sql.gz', 'CREATE_TABLE.sql.gz')]
+        else:
+            plain_sql_files = [p for p in glob.glob(f'{input_folder}/*.sql') if not p.endswith('.gz')]
+            gz_sql_files = glob.glob(f'{input_folder}/*.sql.gz')
+            list_of_sql_files = sorted(plain_sql_files + gz_sql_files)
+            list_of_sql_files = [p for p in list_of_sql_files
+                                if os.path.basename(p) not in ('CREATE_KEYS.sql', 'CREATE_TABLE_NO_KEYS.sql', 'CREATE_TABLE.sql',
+                                                                 'CREATE_KEYS.sql.gz', 'CREATE_TABLE_NO_KEYS.sql.gz', 'CREATE_TABLE.sql.gz')]
 
         # Execute SQL files
         with tqdm(list_of_sql_files, unit='offset') as pb:
@@ -2106,15 +2204,26 @@ class GraphDB():
                 # Update progress bar description
                 pb.set_description(f"⚙️  Table: {table_name}".ljust(PBWIDTH)[:PBWIDTH])
 
-                # Impose soft ignore by replacing 'INSERT INTO' with 'INSERT IGNORE INTO'
+                # Impose soft ignore by replacing 'INSERT INTO' with 'INSERT IGNORE INTO'.
+                # Use sed in a native pipe so we don't load large files into memory.
                 if ignore_existing:
-                    with open(file_path, 'r') as file:
-                        file_data = file.read()
-                    if 'INSERT INTO' in file_data:
-                        sysmsg.warning(f"Imposing 'INSERT IGNORE' for file: {file_path}")
-                        file_data = file_data.replace('INSERT INTO ', 'INSERT IGNORE INTO ')
-                        with open(file_path, 'w') as file:
-                            file.write(file_data)
+                    sysmsg.warning(f"Imposing 'INSERT IGNORE' for file: {file_path}")
+                    temp_path = file_path + '.tmp'
+                    quoted_path = shlex.quote(file_path)
+                    quoted_temp = shlex.quote(temp_path)
+                    if file_path.endswith('.gz'):
+                        sed_cmd = f"gzip -dc {quoted_path} | sed 's/INSERT INTO /INSERT IGNORE INTO /g' | gzip -c > {quoted_temp}"
+                    else:
+                        sed_cmd = f"sed 's/INSERT INTO /INSERT IGNORE INTO /g' {quoted_path} > {quoted_temp}"
+                    sed_result = subprocess.run(sed_cmd, shell=True, stdout=subprocess.PIPE, stderr=subprocess.PIPE, text=True)
+                    if sed_result.returncode != 0:
+                        if os.path.exists(temp_path):
+                            os.remove(temp_path)
+                        raise RuntimeError(
+                            f"Failed to impose INSERT IGNORE for file: {file_path}\n"
+                            f"STDERR: {sed_result.stderr.strip()}"
+                        )
+                    shutil.move(temp_path, file_path)
 
                 # Execute import query from SQL file
                 self.execute_query_from_file(engine_name=engine_name, database=schema_name, file_path=file_path, verbose=verbose)
@@ -2167,7 +2276,7 @@ class GraphDB():
     #----------------------------------#
     # Method: Import table from folder #
     #----------------------------------#
-    def import_table(self, engine_name, schema_name, input_folder, create_keys_after_import=False, ignore_existing=False, verbose=False):
+    def import_table(self, engine_name, schema_name, input_folder, create_keys_after_import=False, ignore_existing=False, verbose=False, compress=False):
 
         # Print messages only if not already printed by referring method
         if sys._getframe(1).f_code.co_name not in ['import_database', 'copy_table', 'copy_database']:
@@ -2188,7 +2297,7 @@ class GraphDB():
         self.import_create_table(engine_name=engine_name, schema_name=schema_name, input_folder=input_folder, include_keys=not create_keys_after_import, ignore_existing=ignore_existing, verbose=verbose)
 
         # Import the table data
-        self.import_table_data(engine_name=engine_name, schema_name=schema_name, input_folder=input_folder, ignore_existing=ignore_existing, verbose=verbose)
+        self.import_table_data(engine_name=engine_name, schema_name=schema_name, input_folder=input_folder, ignore_existing=ignore_existing, verbose=verbose, compress=compress)
 
         # Import/apply the table keys
         if create_keys_after_import:
@@ -2201,7 +2310,7 @@ class GraphDB():
     #-------------------------------------#
     # Method: Import database from folder #
     #-------------------------------------#
-    def import_database(self, engine_name, schema_name, input_folder, create_keys_after_import=False, ignore_existing=False, verbose=False):
+    def import_database(self, engine_name, schema_name, input_folder, create_keys_after_import=False, ignore_existing=False, verbose=False, compress=False):
 
         # Print messages only if not already printed by referring method
         if sys._getframe(1).f_code.co_name not in ['copy_table', 'copy_database']:
@@ -2226,7 +2335,7 @@ class GraphDB():
 
         # Import each table
         for table_folder in sorted(list_of_table_folders):
-            self.import_table(engine_name=engine_name, schema_name=schema_name, input_folder=table_folder, create_keys_after_import=create_keys_after_import, ignore_existing=ignore_existing, verbose=verbose)
+            self.import_table(engine_name=engine_name, schema_name=schema_name, input_folder=table_folder, create_keys_after_import=create_keys_after_import, ignore_existing=ignore_existing, verbose=verbose, compress=compress)
 
         # Print status message
         if sys._getframe(1).f_code.co_name not in ['copy_table', 'copy_database']:
@@ -2241,7 +2350,7 @@ class GraphDB():
     #-----------------------------------#
     # Method: Copy table across engines #
     #-----------------------------------#
-    def copy_table(self, source_engine_name, source_schema_name, target_engine_name, target_schema_name, table_name, filter_by='TRUE', chunk_size=1000000, create_keys_after_import=False):
+    def copy_table(self, source_engine_name, source_schema_name, target_engine_name, target_schema_name, table_name, filter_by='TRUE', chunk_size=1000000, create_keys_after_import=False, compress=False):
 
         # Print status message
         sysmsg.info(f"📝 Copy table across MySQL servers.")
@@ -2253,13 +2362,14 @@ class GraphDB():
             sysmsg.trace(f"Filter by ........ {filter_by}")
         if chunk_size!=1000000:
             sysmsg.trace(f"Chunk size ....... {chunk_size}")
+        sysmsg.trace(f"'compress' set to {'TRUE' if compress else 'FALSE'}.")
         sysmsg.trace(f"""'create_keys_after_import' set to {'TRUE' if create_keys_after_import else 'FALSE'}.""")
 
         # Get current date in YYYY-MM-DD format
         current_date = datetime.datetime.now().strftime('%Y-%m-%d')
 
         # Generate random MD5 hash
-        md5_hash = hashlib.md5(str(source_engine_name+source_schema_name+target_engine_name+target_schema_name+table_name+filter_by+str(chunk_size)+str(create_keys_after_import)).encode()).hexdigest()[:8]
+        md5_hash = hashlib.md5(str(source_engine_name+source_schema_name+target_engine_name+target_schema_name+table_name+filter_by+str(chunk_size)+str(create_keys_after_import)+str(compress)).encode()).hexdigest()[:8]
 
         # Generate the full folder path for temporary export
         temp_output_path = os.path.join(self.config.export_root(), current_date, md5_hash)
@@ -2271,7 +2381,7 @@ class GraphDB():
         sysmsg.info(f"⚙️  Exporting table from '{source_engine_name}' engine into temporary folder ...")
 
         # Export the table from source engine to temporary folder
-        self.export_table(engine_name=source_engine_name, schema_name=source_schema_name, table_name=table_name, output_folder=temp_output_path, filter_by=filter_by, chunk_size=chunk_size, include_create_tables=True)
+        self.export_table(engine_name=source_engine_name, schema_name=source_schema_name, table_name=table_name, output_folder=temp_output_path, filter_by=filter_by, chunk_size=chunk_size, include_create_tables=True, compress=compress)
 
         # Print status message
         sysmsg.info("☑️  Data export completed.")
@@ -2291,7 +2401,7 @@ class GraphDB():
     #--------------------------------------#
     # Method: Copy database across engines #
     #--------------------------------------#
-    def copy_database(self, source_engine_name, source_schema_name, target_engine_name, target_schema_name, filter_by='TRUE', chunk_size=1000000, create_keys_after_import=False):
+    def copy_database(self, source_engine_name, source_schema_name, target_engine_name, target_schema_name, filter_by='TRUE', chunk_size=1000000, create_keys_after_import=False, compress=False):
 
         # Print status message
         sysmsg.info(f"📝 Copy database across MySQL servers.")
@@ -2303,13 +2413,14 @@ class GraphDB():
             sysmsg.trace(f"Filter by ........ {filter_by}")
         if chunk_size!=1000000:
             sysmsg.trace(f"Chunk size ....... {chunk_size}")
+        sysmsg.trace(f"'compress' set to {'TRUE' if compress else 'FALSE'}.")
         sysmsg.trace(f"""'create_keys_after_import' set to {'TRUE' if create_keys_after_import else 'FALSE'}.""")
 
         # Get current date in YYYY-MM-DD format
         current_date = datetime.datetime.now().strftime('%Y-%m-%d')
 
         # Generate random MD5 hash
-        md5_hash = hashlib.md5(str(source_engine_name+source_schema_name+target_engine_name+target_schema_name+filter_by+str(chunk_size)+str(create_keys_after_import)).encode()).hexdigest()[:8]
+        md5_hash = hashlib.md5(str(source_engine_name+source_schema_name+target_engine_name+target_schema_name+filter_by+str(chunk_size)+str(create_keys_after_import)+str(compress)).encode()).hexdigest()[:8]
 
         # Generate the full folder path for temporary export
         temp_output_path = os.path.join(self.config.export_root(), current_date, md5_hash)
@@ -2321,7 +2432,7 @@ class GraphDB():
         sysmsg.info(f"⚙️  Exporting database tables from '{source_engine_name}' engine into temporary folder ...")
 
         # Export the database from source engine to temporary folder
-        self.export_database(engine_name=source_engine_name, schema_name=source_schema_name, output_folder=temp_output_path, filter_by=filter_by, chunk_size=chunk_size, include_create_tables=True)
+        self.export_database(engine_name=source_engine_name, schema_name=source_schema_name, output_folder=temp_output_path, filter_by=filter_by, chunk_size=chunk_size, include_create_tables=True, compress=compress)
 
         # Print status message
         sysmsg.info("☑️  Data export completed.")
@@ -2350,17 +2461,23 @@ class GraphDB():
     #---------------------------------------#
     def compare_tables(self, source_engine_name, source_schema_name,
                     target_engine_name, target_schema_name,
-                    table_name: str, *, exact_row_count: bool = False):
+                    table_name: str, *, row_count_tolerance: float = 0.10,
+                    ignore_warnings: bool = False):
         """
         Compare a table across two MySQL servers/schemas and print results as:
 
-                            source   target   result
+                            source   target   diff    result
         metric
-        engine              ...      ...      ✅/⚠️/❌
+        engine              ...      ...      ...     🟢/🟡/🔴
         ...
 
-        If exact_row_count=True, also runs COUNT(*) on both tables and adds:
-        - row_count (exact)
+        Always computes exact row counts (COUNT(*)).
+        Row counts that differ by <= row_count_tolerance (default 10%) are
+        reported as warnings, not errors. Missing tables or schema differences
+        remain errors.
+
+        If ignore_warnings=True, no output is produced for tables that have
+        only warnings and no errors.
 
         Returns a dict with source/target rows + comparison table rows + df.
         """
@@ -2368,11 +2485,25 @@ class GraphDB():
         from collections.abc import Mapping, Sequence
         import pandas as pd
 
-        sysmsg.info("🔎 Compare table across MySQL servers.")
-        sysmsg.trace(f"Source ........... {source_engine_name} / {source_schema_name}")
-        sysmsg.trace(f"Target ........... {target_engine_name} / {target_schema_name}")
-        sysmsg.trace(f"Table ............ {table_name}")
-        sysmsg.trace(f"'exact_row_count' is set to {str(exact_row_count).upper()}")
+        OK, WARN, ERR = "🟢", "🟡", "🔴"
+
+        source_path = f"{source_engine_name}.{source_schema_name}"
+        target_path = f"{target_engine_name}.{target_schema_name}"
+
+        def _print_header():
+            header_width = max(
+                len(table_name),
+                len(f"Source: {source_path}"),
+                len(f"Target: {target_path}"),
+            ) + 4
+            bar = "─" * (header_width + 1)
+            table_name_colored = f"\033[1;36m{table_name}\033[0m"
+            print("\n")
+            print(f"┌{bar}┐")
+            print(f"│ Table : {table_name_colored}{' ' * (header_width - 9 - len(table_name))} │")
+            print(f"│ Source: {source_path:<{header_width - 9}} │")
+            print(f"│ Target: {target_path:<{header_width - 9}} │")
+            print(f"└{bar}┘")
 
         # -------------------------
         # Formatting helpers
@@ -2396,6 +2527,49 @@ class GraphDB():
                 if v < 1024 or u == units[-1]:
                     return f"{v:.2f} {u}"
                 v /= 1024.0
+
+        def _row_count_status(a, b, tol):
+            """
+            Decide status for numeric counts (exact or estimate):
+            - equal -> OK
+            - one is zero and the other is not -> ERR
+            - relative difference <= tol -> WARN
+            - otherwise -> ERR
+            """
+            try:
+                a = None if a is None else int(a)
+                b = None if b is None else int(b)
+            except Exception:
+                return ERR if a != b else OK
+
+            if a == b:
+                return OK
+            if a is None or b is None:
+                return ERR
+            if a == 0 and b == 0:
+                return OK
+            if a == 0 or b == 0:
+                return ERR
+
+            rel_diff = abs(a - b) / max(a, b)
+            return WARN if rel_diff <= tol else ERR
+
+        def _count_diff(a, b):
+            """Human-readable diff for counts, e.g. '+2 (0.07%)'."""
+            try:
+                a = None if a is None else int(a)
+                b = None if b is None else int(b)
+            except Exception:
+                return ""
+            if a is None or b is None:
+                return ""
+            if a == b:
+                return ""
+            delta = b - a
+            denom = max(a, b)
+            pct = abs(delta) / denom * 100 if denom else 0.0
+            sign = "+" if delta >= 0 else ""
+            return f"{sign}{delta} ({pct:.1f}%)"
 
         # -------------------------
         # Result normalizer
@@ -2507,16 +2681,12 @@ class GraphDB():
 
             if not raw:
                 if _secondary_exists_check(engine_name, schema_name, tname):
-                    sysmsg.warning(
-                        f"⚠️ `{schema_name}`.`{tname}` exists on {engine_name}, but information_schema returned 0 rows."
-                    )
+                    print(f"\n⚠️ `{schema_name}`.`{tname}` exists on {engine_name}, but information_schema returned 0 rows.")
                 else:
-                    sysmsg.error(f"❌ Table not found: `{schema_name}`.`{tname}` on {engine_name}")
+                    print(f"\n❌ Table not found: `{schema_name}`.`{tname}` on {engine_name}")
             elif row is None:
-                sysmsg.warning(
-                    f"⚠️ `{schema_name}`.`{tname}` found on {engine_name}, but could not map result row to dict."
-                )
-                sysmsg.trace(f"Raw row type={type(raw[0])} value={raw[0]!r}")
+                print(f"\n⚠️ `{schema_name}`.`{tname}` found on {engine_name}, but could not map result row to dict.")
+                print(f"Raw row type={type(raw[0])} value={raw[0]!r}")
 
             return raw, row
 
@@ -2552,26 +2722,25 @@ class GraphDB():
             return {"source": src, "target": tgt, "table": None, "df": None, "diffs": {"fatal": ["missing_or_unreadable_table_metadata"]}}
 
         # -------------------------
-        # Optional exact row count
+        # Exact row count (default)
         # -------------------------
-        if exact_row_count:
-            sysmsg.info("🔢 Computing exact row counts (COUNT(*))...")
-            src["exact_row_count"] = _exact_count(source_engine_name, source_schema_name, table_name)
-            tgt["exact_row_count"] = _exact_count(target_engine_name, target_schema_name, table_name)
-        else:
-            # keep keys absent (or set to None if you prefer)
-            src.pop("exact_row_count", None)
-            tgt.pop("exact_row_count", None)
+        src["exact_row_count"] = _exact_count(source_engine_name, source_schema_name, table_name)
+        tgt["exact_row_count"] = _exact_count(target_engine_name, target_schema_name, table_name)
 
         # -------------------------
         # Build comparison table rows
         # -------------------------
-        OK, WARN, ERR = "✅", "⚠️", "❌"
-
-        def _row(metric, a, b, formatter, sev_on_diff):
-            if a == b:
-                return {"metric": metric, "source": formatter(a), "target": formatter(b), "result": OK}
-            return {"metric": metric, "source": formatter(a), "target": formatter(b), "result": sev_on_diff}
+        def _row(metric, a, b, formatter, sev_on_diff, diff_formatter=None):
+            diff = ""
+            if a != b and diff_formatter is not None:
+                diff = diff_formatter(a, b)
+            return {
+                "metric": metric,
+                "source": formatter(a),
+                "target": formatter(b),
+                "diff": diff,
+                "result": OK if a == b else sev_on_diff,
+            }
 
         rows = []
 
@@ -2588,12 +2757,17 @@ class GraphDB():
         rows.append(_row("index_count", src.get("index_count"), tgt.get("index_count"), _fmt, WARN))
         rows.append(_row("unique_index_count", src.get("unique_index_count"), tgt.get("unique_index_count"), _fmt, WARN))
 
-        # Exact count (optional, authoritative)
-        if exact_row_count:
-            rows.append(_row("row_count (exact)", src.get("exact_row_count"), tgt.get("exact_row_count"), _fmt, ERR))
-
-        # Estimate (FYI)
-        rows.append(_row("table_rows (estimate)", src.get("table_rows"), tgt.get("table_rows"), _fmt, WARN if exact_row_count else ERR))
+        # Exact count - tolerate small differences
+        exact_a = src.get("exact_row_count")
+        exact_b = tgt.get("exact_row_count")
+        exact_status = _row_count_status(exact_a, exact_b, row_count_tolerance)
+        rows.append({
+            "metric": "row_count (exact)",
+            "source": _fmt(exact_a),
+            "target": _fmt(exact_b),
+            "diff": _count_diff(exact_a, exact_b),
+            "result": exact_status,
+        })
 
         # Footprint (warning)
         rows.append(_row("data_length", src.get("data_length"), tgt.get("data_length"), _fmt_bytes, WARN))
@@ -2604,42 +2778,38 @@ class GraphDB():
         # -------------------------
         # Display as dataframe
         # -------------------------
-        df = pd.DataFrame(rows).set_index("metric")[["source", "target", "result"]]
-
-        sysmsg.info("📋 Table comparison:")
-        with pd.option_context(
-            "display.max_rows", 200,
-            "display.max_colwidth", 120,
-            "display.width", 200
-        ):
-            print(df.to_string())
+        df = pd.DataFrame(rows).set_index("metric")[["source", "target", "diff", "result"]]
 
         # -------------------------
         # Emit soft sysmsg summary
         # -------------------------
         n_warn = int((df["result"] == WARN).sum())
-        n_err = int((df["result"] == ERR).sum())
+        n_err  = int((df["result"] == ERR).sum())
 
         diffs = {"warning": [], "error": [], "fatal": []}
         for metric, r in df.iterrows():
             if r["result"] == WARN:
                 diffs["warning"].append(f"{metric}: {r['source']} != {r['target']}")
             elif r["result"] == ERR:
-                diffs["error"].append(f"{metric}: {r['source']} != {r['target']}")
+                diffs["error"  ].append(f"{metric}: {r['source']} != {r['target']}")
 
-        if n_err:
-            sysmsg.error(f"⛔ {n_err} critical differences found. ({n_warn} warnings)")
-        elif n_warn:
-            sysmsg.warning(f"⚠️  {n_warn} warnings found.")
-        else:
-            sysmsg.success("✅ No differences detected in metadata metrics.")
+        # Optionally suppress tables that only have warnings
+        skip_output = ignore_warnings and n_err == 0
+        if not skip_output:
+            _print_header()
+            with pd.option_context(
+                "display.max_rows", 200,
+                "display.max_colwidth", 120,
+                "display.width", 200
+            ):
+                print(df.to_string())
 
-        # Helpful note (only relevant when exact_row_count is False or estimate differs)
-        if str(src.get("engine", "")).upper() == "INNODB" and not exact_row_count:
-            sysmsg.warning(
-                "ℹ️  Note: table_rows is an estimate for InnoDB. "
-                "Re-run with exact_row_count=True to compute COUNT(*)."
-            )
+            if n_err:
+                print(f"\n🔴 {n_err} critical differences found. ({n_warn} warnings)")
+            elif n_warn:
+                print(f"\n🟡 {n_warn} warnings found.")
+            else:
+                print("\n🟢 No differences detected in metadata metrics.")
 
         return {"source": src, "target": tgt, "table": rows, "df": df, "diffs": diffs}
 
@@ -2648,7 +2818,8 @@ class GraphDB():
     #-----------------------------------------#
     def compare_databases(self, source_engine_name, source_schema_name,
                     target_engine_name, target_schema_name,
-                    *, exact_row_count: bool = False):
+                    *, row_count_tolerance: float = 0.10,
+                    ignore_warnings: bool = False):
         """
         Compare all tables in a database across two MySQL servers/schemas.
         Calls compare_tables() for each table and aggregates results.
@@ -2656,7 +2827,7 @@ class GraphDB():
         sysmsg.info("🔎 Compare database across MySQL servers.")
         sysmsg.trace(f"Source ........... {source_engine_name} / {source_schema_name}")
         sysmsg.trace(f"Target ........... {target_engine_name} / {target_schema_name}")
-        sysmsg.trace(f"'exact_row_count' is set to {str(exact_row_count).upper()}")
+        sysmsg.trace(f"'row_count_tolerance' is set to {row_count_tolerance * 100:.0f}%")
 
         source_tables = set(self.get_tables_in_schema(source_engine_name, source_schema_name))
         target_tables = set(self.get_tables_in_schema(target_engine_name, target_schema_name))
@@ -2665,12 +2836,12 @@ class GraphDB():
 
         results = {}
         for table_name in all_tables:
-            sysmsg.info(f"🔎 Comparing table: {table_name}")
             result = self.compare_tables(
                 source_engine_name, source_schema_name,
                 target_engine_name, target_schema_name,
                 table_name,
-                exact_row_count=exact_row_count
+                row_count_tolerance=row_count_tolerance,
+                ignore_warnings=ignore_warnings,
             )
             results[table_name] = result
 
