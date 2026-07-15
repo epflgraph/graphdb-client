@@ -14,6 +14,18 @@ import sys, os, re, subprocess, json, datetime, hashlib, random, glob, time, ric
 from graphdb.core.config import GraphDBConfig, GraphDBConfigError
 from graphdb.models.sqlquery import print_sql
 
+# New architecture imports (incremental migration)
+from graphdb.application.adapter_registry import AdapterRegistry
+from graphdb.domain.connection import ConnectionParams
+from graphdb.infrastructure.shared.ssl_options import (
+    normalize_ssl_options,
+    parse_bool,
+    build_ssl_connect_args,
+    detect_cli_option_names,
+    build_ssl_cli_flags,
+)
+from graphdb.infrastructure.sqlalchemy.engine_factory import create_sqlalchemy_engine
+
 # Find the repository root directory
 REPO_ROOT = Path(__file__).resolve().parents[2]
 
@@ -169,6 +181,9 @@ class GraphDB():
         self.config = config or GraphDBConfig.from_default_file()
         self.default_engine_name = self.config.default_env
 
+        # Build new architecture adapters; mirror their state for backward compatibility.
+        self._adapter_registry = AdapterRegistry(self.config)
+
         self.params = {}
         self.engine = {}
         self.base_command_mysql = {}
@@ -176,245 +191,56 @@ class GraphDB():
         self.subprocess_env = {}
 
         for env_name, env_config in self.config.environments.items():
-            params = env_config.as_dict()
-            self.params[env_name] = params
-            self.engine[env_name] = self._create_engine(params)
-
-            client_bin = params.get("client_bin") or self.config.client_bin
-            dump_bin = params.get("dump_bin") or self.config.dump_bin
-
-            env_var = f"MYSQL_{env_name.upper().replace('-', '_')}_PWD"
-            env = os.environ.copy()
-            env["MYSQL_PWD"] = str(params["password"])
-            self.subprocess_env[env_name] = env
-
-            mysql_supported_options = self._detect_cli_option_names(shlex.split(client_bin))
-            dump_supported_options = self._detect_cli_option_names(shlex.split(dump_bin))
-            ssl_flags_mysql = self._build_ssl_cli_flags(
-                params.get("ssl"),
-                supported_options=mysql_supported_options,
-                engine_flavor=params.get("engine_flavor"),
-            )
-            ssl_flags_mysqldump = self._build_ssl_cli_flags(
-                params.get("ssl"),
-                supported_options=dump_supported_options,
-                engine_flavor=params.get("engine_flavor"),
-            )
-
-            mysql_cmd = (
-                shlex.split(client_bin)
-                + [
-                    "-u", params["username"],
-                    "-h", params["host_address"],
-                    "-P", str(params["port"]),
-                ]
-            )
-            if ssl_flags_mysql:
-                mysql_cmd += ssl_flags_mysql
-            self.base_command_mysql[env_name] = mysql_cmd
-
-            mysqldump_cmd = (
-                shlex.split(dump_bin)
-                + [
-                    "-u", params["username"],
-                    "-h", params["host_address"],
-                    "-P", str(params["port"]),
-                ]
-            )
-            if ssl_flags_mysqldump:
-                mysqldump_cmd += ssl_flags_mysqldump
-            mysqldump_cmd += [
-                "-v",
-                "--no-create-db",
-                "--no-create-info",
-                "--skip-lock-tables",
-                "--single-transaction",
-            ]
-            # MySQL 8 clients can query COLUMN_STATISTICS, which breaks against
-            # older servers that do not expose information_schema.COLUMN_STATISTICS.
-            if "column-statistics" in dump_supported_options:
-                mysqldump_cmd += ["--column-statistics=0"]
-            self.base_command_mysqldump[env_name] = mysqldump_cmd
+            adapter = self._adapter_registry.get(env_name)
+            self.params[env_name] = env_config.as_dict()
+            self.engine[env_name] = adapter.engine
+            self.base_command_mysql[env_name] = adapter.base_command_mysql
+            self.base_command_mysqldump[env_name] = adapter.base_command_mysqldump
+            self.subprocess_env[env_name] = adapter.subprocess_env
 
     #-------------------------------#
     # SSL helpers                   #
     #-------------------------------#
     @staticmethod
     def _normalize_ssl_options(raw_ssl):
-        if not isinstance(raw_ssl, dict):
-            return {}
-        normalized = {}
-        for key, value in raw_ssl.items():
-            if not isinstance(key, str):
-                continue
-            normalized[key.lower().replace('-', '_')] = value
-        return normalized
+        return normalize_ssl_options(raw_ssl)
 
     @staticmethod
     def _parse_bool(value):
-        if isinstance(value, bool):
-            return value
-        if isinstance(value, str):
-            normalized_value = value.strip().lower()
-            if normalized_value in {"1", "true", "yes", "on"}:
-                return True
-            if normalized_value in {"0", "false", "no", "off"}:
-                return False
-        return None
+        return parse_bool(value)
 
     @classmethod
     def _build_ssl_connect_args(cls, ssl_options):
-        normalized = cls._normalize_ssl_options(ssl_options)
-        if not normalized:
-            return {}
-
-        connect_args: Dict[str, Any] = {}
-
-        # Map certificate/credential options
-        for key, value in normalized.items():
-            if key in {"mode", "ssl_mode", "verify_server_cert", "ssl_verify_server_cert"}:
-                continue
-            if value is None:
-                continue
-            target_key = key[4:] if key.startswith("ssl_") else key
-            connect_args[target_key] = value
-
-        # Handle verification toggles
-        verify_value = None
-        for verify_key in ("verify_server_cert", "ssl_verify_server_cert"):
-            if verify_key in normalized:
-                verify_value = normalized[verify_key]
-                break
-        verify_bool = cls._parse_bool(verify_value)
-
-        if verify_bool is False:
-            connect_args["cert_reqs"] = ssl.CERT_NONE
-            connect_args["check_hostname"] = False
-        elif verify_bool is True:
-            connect_args["cert_reqs"] = ssl.CERT_REQUIRED
-            connect_args["check_hostname"] = True
-        elif "ca" in connect_args or "cert" in connect_args or "key" in connect_args:
-            connect_args.setdefault("cert_reqs", ssl.CERT_REQUIRED)
-            connect_args.setdefault("check_hostname", True)
-
-        return connect_args
+        return build_ssl_connect_args(ssl_options)
 
     @classmethod
     def _detect_cli_option_names(cls, base_command):
-        if not base_command:
-            return set()
-
-        cache_key = " ".join(base_command)
-        if cache_key in cls._cli_option_cache:
-            return cls._cli_option_cache[cache_key]
-
-        options = set()
-        try:
-            result = subprocess.run(
-                base_command + ["--help"],
-                stdout=subprocess.PIPE,
-                stderr=subprocess.PIPE,
-                text=True,
-                check=False
-            )
-            help_text = f"{result.stdout}\n{result.stderr}"
-            for option in re.findall(r"^\s*(?:-[^,\s]+,\s+)?--([a-z0-9][a-z0-9-]*)", help_text, flags=re.MULTILINE):
-                options.add(option.lower())
-        except Exception:
-            options = set()
-
-        cls._cli_option_cache[cache_key] = options
-        return options
+        return detect_cli_option_names(base_command)
 
     @classmethod
     def _build_ssl_cli_flags(cls, ssl_options, supported_options=None, engine_flavor=None):
-
-        normalized = cls._normalize_ssl_options(ssl_options)
-        if not normalized:
-            return []
-        supported_options = {opt.lower() for opt in (supported_options or set())}
-
-        flags = []
-
-        def _pick(*keys):
-            for key in keys:
-                if key in normalized:
-                    return normalized[key]
-            return None
-
-        mode_value = _pick("mode", "ssl_mode")
-        verify_value = _pick("verify_server_cert", "ssl_verify_server_cert")
-        verify_bool = cls._parse_bool(verify_value)
-
-        # Decide between MySQL's --ssl-mode and legacy/MariaDB --ssl.
-        if mode_value is not None and str(mode_value).strip().upper() == "DISABLED":
-            return []
-
-        if "ssl-mode" in supported_options:
-            if mode_value is None:
-                if verify_bool is True:
-                    mode_value = "VERIFY_IDENTITY"
-                elif verify_bool is False:
-                    mode_value = "REQUIRED"
-                else:
-                    mode_value = "REQUIRED"
-
-            mode_value = str(mode_value).strip().upper()
-            allowed_modes = {"DISABLED", "PREFERRED", "REQUIRED", "VERIFY_CA", "VERIFY_IDENTITY"}
-            if mode_value not in allowed_modes:
-                raise ValueError(f"Unsupported MySQL ssl mode: {mode_value}")
-
-            flags.append(f"--ssl-mode={mode_value}")
-
-        elif "ssl" in supported_options or not supported_options:
-            # Fall back to legacy option for clients that do not expose --ssl-mode.
-            flags.append("--ssl")
-
-            # Legacy verify toggles (commonly available on MariaDB and older MySQL clients).
-            if verify_bool is True and (not supported_options or "ssl-verify-server-cert" in supported_options):
-                flags.append("--ssl-verify-server-cert")
-            elif verify_bool is False and (not supported_options or "skip-ssl-verify-server-cert" in supported_options):
-                flags.append("--skip-ssl-verify-server-cert")
-
-        for opt_keys, cli_option in [
-            (("ca"    , "ssl_ca"    ), "--ssl-ca"    ),
-            (("cert"  , "ssl_cert"  ), "--ssl-cert"  ),
-            (("key"   , "ssl_key"   ), "--ssl-key"   ),
-            (("cipher", "ssl_cipher"), "--ssl-cipher"),
-        ]:
-            value = _pick(*opt_keys)
-            if value is not None and (not supported_options or cli_option.lstrip("-") in supported_options):
-                flags.append(f"{cli_option}={value}")
-
-        return flags
+        return build_ssl_cli_flags(ssl_options, supported_options=supported_options, engine_flavor=engine_flavor)
 
     #-------------------------------------#
     # Method: Initialize the MySQL engine #
     #-------------------------------------#
     def _create_engine(self, params):
-        ssl_connect_args = self._build_ssl_connect_args(params.get("ssl"))
-        engine_kwargs = {"pool_pre_ping": True}
-        if ssl_connect_args:
-            engine_kwargs["connect_args"] = {"ssl": ssl_connect_args}
-
-        sqlalchemy_url = params.get("sqlalchemy_url")
-        if sqlalchemy_url:
-            engine_url = str(sqlalchemy_url)
-        else:
-            sqlalchemy_dialect = str(params.get("sqlalchemy_dialect") or "mysql")
-            sqlalchemy_driver = str(params.get("sqlalchemy_driver") or "pymysql")
-            engine_url = (
-                f'{sqlalchemy_dialect}+{sqlalchemy_driver}://'
-                f'{params["username"]}:{params["password"]}@{params["host_address"]}:{params["port"]}/'
+        # Backward-compatible wrapper around the new engine factory.
+        if isinstance(params, dict):
+            params = ConnectionParams(
+                host_address=params["host_address"],
+                port=params["port"],
+                username=params["username"],
+                password=params["password"],
+                ssl=params.get("ssl"),
+                client_bin=params.get("client_bin"),
+                dump_bin=params.get("dump_bin"),
+                engine_flavor=params.get("engine_flavor"),
+                sqlalchemy_url=params.get("sqlalchemy_url"),
+                sqlalchemy_dialect=params.get("sqlalchemy_dialect"),
+                sqlalchemy_driver=params.get("sqlalchemy_driver"),
             )
-
-        engine = SQLEngine(engine_url, **engine_kwargs)
-        @event.listens_for(engine, "connect")
-        def set_sql_mode(dbapi_conn, _):
-            with dbapi_conn.cursor() as cur:
-                cur.execute("SET SESSION sql_mode = 'STRICT_TRANS_TABLES,NO_ENGINE_SUBSTITUTION'")
-
-        return engine
+        return create_sqlalchemy_engine(params)
 
     def initiate_engine(self, server_name):
         if server_name not in self.params:

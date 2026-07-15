@@ -1,6 +1,7 @@
 # graphdb/cli/register.py
 # This module registers CLI commands based on specifications defined in `cli_definitions`.
-from graphdb.cli.specs import cli_definitions
+from graphdb.cli.specs import get_cli_definitions
+
 
 #==============================#
 # Register domain and commands #
@@ -13,6 +14,7 @@ def register(subparsers, cmd_name):
       graphdb {cmd_name} [-h|...]
     """
 
+    cli_definitions = get_cli_definitions()
     spec = cli_definitions[cmd_name]
 
     # Register Level 1 parser

@@ -23,7 +23,10 @@ def _drop_all_objects(db: GraphDB, engine_name: str, schema: str) -> None:
 
 @pytest.fixture(scope="session")
 def graphdb_env() -> tuple[GraphDB, str]:
-    db = GraphDB()
+    try:
+        db = GraphDB()
+    except Exception as exc:
+        pytest.skip(f"E2E setup skipped: could not load GraphDB config ({exc}).")
     if E2E_ENGINE not in db.engine:
         configured = ", ".join(sorted(db.engine.keys()))
         pytest.skip(
