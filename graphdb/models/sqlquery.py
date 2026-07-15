@@ -290,8 +290,12 @@ class SQLQuery(BaseModel):
     # Generate a Rich Panel containing the SQL syntax and metadata, with styling based on the box_style and show_header options.
     def panel(self, *, include_debug: bool = False) -> Panel:
         meta = self.meta_text(include_debug=include_debug)
+        parts: list[Syntax | Text] = [self.syntax()]
+        if self.description:
+            parts.append(Text(self.description, style="italic dim"))
+        parts.append(meta if meta.plain else Text())
         return Panel(
-            Group(self.syntax(), meta if meta.plain else Text()),
+            Group(*parts),
             border_style="bright_cyan",
             box=_BOX_MAP[self.box_style],
             padding=(1, 2),
@@ -305,6 +309,8 @@ class SQLQuery(BaseModel):
             target.print(Rule(f"[bold bright_blue]{escape(self.title)}"))
         if self.copyable:
             target.print(self.aligned_sql())
+            if self.description:
+                target.print(Text(self.description, style="italic dim"))
             meta = self.meta_text()
             if meta.plain:
                 target.print(meta)

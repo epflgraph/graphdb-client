@@ -18,6 +18,10 @@ class ConfigService:
     def from_default_file(cls) -> "ConfigService":
         return cls(GraphDBConfig.from_default_file())
 
+    @classmethod
+    def from_file(cls, path: Path | str) -> "ConfigService":
+        return cls(GraphDBConfig.from_file(path))
+
     def load_raw(self, path: Path) -> Dict[str, Any]:
         with open(path, "r", encoding="utf-8") as f:
             return safe_load(f) or {}
