@@ -14,6 +14,18 @@ import sys, os, re, subprocess, json, datetime, hashlib, random, glob, time, ric
 from graphdb.core.config import GraphDBConfig, GraphDBConfigError
 from graphdb.models.sqlquery import print_sql
 
+# New architecture imports (incremental migration)
+from graphdb.application.adapter_registry import AdapterRegistry
+from graphdb.domain.connection import ConnectionParams
+from graphdb.infrastructure.shared.ssl_options import (
+    normalize_ssl_options,
+    parse_bool,
+    build_ssl_connect_args,
+    detect_cli_option_names,
+    build_ssl_cli_flags,
+)
+from graphdb.infrastructure.sqlalchemy.engine_factory import create_sqlalchemy_engine
+
 # Find the repository root directory
 REPO_ROOT = Path(__file__).resolve().parents[2]
 
@@ -169,6 +181,9 @@ class GraphDB():
         self.config = config or GraphDBConfig.from_default_file()
         self.default_engine_name = self.config.default_env
 
+        # Build new architecture adapters; mirror their state for backward compatibility.
+        self._adapter_registry = AdapterRegistry(self.config)
+
         self.params = {}
         self.engine = {}
         self.base_command_mysql = {}
@@ -176,245 +191,56 @@ class GraphDB():
         self.subprocess_env = {}
 
         for env_name, env_config in self.config.environments.items():
-            params = env_config.as_dict()
-            self.params[env_name] = params
-            self.engine[env_name] = self._create_engine(params)
-
-            client_bin = params.get("client_bin") or self.config.client_bin
-            dump_bin = params.get("dump_bin") or self.config.dump_bin
-
-            env_var = f"MYSQL_{env_name.upper().replace('-', '_')}_PWD"
-            env = os.environ.copy()
-            env["MYSQL_PWD"] = str(params["password"])
-            self.subprocess_env[env_name] = env
-
-            mysql_supported_options = self._detect_cli_option_names(shlex.split(client_bin))
-            dump_supported_options = self._detect_cli_option_names(shlex.split(dump_bin))
-            ssl_flags_mysql = self._build_ssl_cli_flags(
-                params.get("ssl"),
-                supported_options=mysql_supported_options,
-                engine_flavor=params.get("engine_flavor"),
-            )
-            ssl_flags_mysqldump = self._build_ssl_cli_flags(
-                params.get("ssl"),
-                supported_options=dump_supported_options,
-                engine_flavor=params.get("engine_flavor"),
-            )
-
-            mysql_cmd = (
-                shlex.split(client_bin)
-                + [
-                    "-u", params["username"],
-                    "-h", params["host_address"],
-                    "-P", str(params["port"]),
-                ]
-            )
-            if ssl_flags_mysql:
-                mysql_cmd += ssl_flags_mysql
-            self.base_command_mysql[env_name] = mysql_cmd
-
-            mysqldump_cmd = (
-                shlex.split(dump_bin)
-                + [
-                    "-u", params["username"],
-                    "-h", params["host_address"],
-                    "-P", str(params["port"]),
-                ]
-            )
-            if ssl_flags_mysqldump:
-                mysqldump_cmd += ssl_flags_mysqldump
-            mysqldump_cmd += [
-                "-v",
-                "--no-create-db",
-                "--no-create-info",
-                "--skip-lock-tables",
-                "--single-transaction",
-            ]
-            # MySQL 8 clients can query COLUMN_STATISTICS, which breaks against
-            # older servers that do not expose information_schema.COLUMN_STATISTICS.
-            if "column-statistics" in dump_supported_options:
-                mysqldump_cmd += ["--column-statistics=0"]
-            self.base_command_mysqldump[env_name] = mysqldump_cmd
+            adapter = self._adapter_registry.get(env_name)
+            self.params[env_name] = env_config.as_dict()
+            self.engine[env_name] = adapter.engine
+            self.base_command_mysql[env_name] = adapter.base_command_mysql
+            self.base_command_mysqldump[env_name] = adapter.base_command_mysqldump
+            self.subprocess_env[env_name] = adapter.subprocess_env
 
     #-------------------------------#
     # SSL helpers                   #
     #-------------------------------#
     @staticmethod
     def _normalize_ssl_options(raw_ssl):
-        if not isinstance(raw_ssl, dict):
-            return {}
-        normalized = {}
-        for key, value in raw_ssl.items():
-            if not isinstance(key, str):
-                continue
-            normalized[key.lower().replace('-', '_')] = value
-        return normalized
+        return normalize_ssl_options(raw_ssl)
 
     @staticmethod
     def _parse_bool(value):
-        if isinstance(value, bool):
-            return value
-        if isinstance(value, str):
-            normalized_value = value.strip().lower()
-            if normalized_value in {"1", "true", "yes", "on"}:
-                return True
-            if normalized_value in {"0", "false", "no", "off"}:
-                return False
-        return None
+        return parse_bool(value)
 
     @classmethod
     def _build_ssl_connect_args(cls, ssl_options):
-        normalized = cls._normalize_ssl_options(ssl_options)
-        if not normalized:
-            return {}
-
-        connect_args: Dict[str, Any] = {}
-
-        # Map certificate/credential options
-        for key, value in normalized.items():
-            if key in {"mode", "ssl_mode", "verify_server_cert", "ssl_verify_server_cert"}:
-                continue
-            if value is None:
-                continue
-            target_key = key[4:] if key.startswith("ssl_") else key
-            connect_args[target_key] = value
-
-        # Handle verification toggles
-        verify_value = None
-        for verify_key in ("verify_server_cert", "ssl_verify_server_cert"):
-            if verify_key in normalized:
-                verify_value = normalized[verify_key]
-                break
-        verify_bool = cls._parse_bool(verify_value)
-
-        if verify_bool is False:
-            connect_args["cert_reqs"] = ssl.CERT_NONE
-            connect_args["check_hostname"] = False
-        elif verify_bool is True:
-            connect_args["cert_reqs"] = ssl.CERT_REQUIRED
-            connect_args["check_hostname"] = True
-        elif "ca" in connect_args or "cert" in connect_args or "key" in connect_args:
-            connect_args.setdefault("cert_reqs", ssl.CERT_REQUIRED)
-            connect_args.setdefault("check_hostname", True)
-
-        return connect_args
+        return build_ssl_connect_args(ssl_options)
 
     @classmethod
     def _detect_cli_option_names(cls, base_command):
-        if not base_command:
-            return set()
-
-        cache_key = " ".join(base_command)
-        if cache_key in cls._cli_option_cache:
-            return cls._cli_option_cache[cache_key]
-
-        options = set()
-        try:
-            result = subprocess.run(
-                base_command + ["--help"],
-                stdout=subprocess.PIPE,
-                stderr=subprocess.PIPE,
-                text=True,
-                check=False
-            )
-            help_text = f"{result.stdout}\n{result.stderr}"
-            for option in re.findall(r"^\s*(?:-[^,\s]+,\s+)?--([a-z0-9][a-z0-9-]*)", help_text, flags=re.MULTILINE):
-                options.add(option.lower())
-        except Exception:
-            options = set()
-
-        cls._cli_option_cache[cache_key] = options
-        return options
+        return detect_cli_option_names(base_command)
 
     @classmethod
     def _build_ssl_cli_flags(cls, ssl_options, supported_options=None, engine_flavor=None):
-
-        normalized = cls._normalize_ssl_options(ssl_options)
-        if not normalized:
-            return []
-        supported_options = {opt.lower() for opt in (supported_options or set())}
-
-        flags = []
-
-        def _pick(*keys):
-            for key in keys:
-                if key in normalized:
-                    return normalized[key]
-            return None
-
-        mode_value = _pick("mode", "ssl_mode")
-        verify_value = _pick("verify_server_cert", "ssl_verify_server_cert")
-        verify_bool = cls._parse_bool(verify_value)
-
-        # Decide between MySQL's --ssl-mode and legacy/MariaDB --ssl.
-        if mode_value is not None and str(mode_value).strip().upper() == "DISABLED":
-            return []
-
-        if "ssl-mode" in supported_options:
-            if mode_value is None:
-                if verify_bool is True:
-                    mode_value = "VERIFY_IDENTITY"
-                elif verify_bool is False:
-                    mode_value = "REQUIRED"
-                else:
-                    mode_value = "REQUIRED"
-
-            mode_value = str(mode_value).strip().upper()
-            allowed_modes = {"DISABLED", "PREFERRED", "REQUIRED", "VERIFY_CA", "VERIFY_IDENTITY"}
-            if mode_value not in allowed_modes:
-                raise ValueError(f"Unsupported MySQL ssl mode: {mode_value}")
-
-            flags.append(f"--ssl-mode={mode_value}")
-
-        elif "ssl" in supported_options or not supported_options:
-            # Fall back to legacy option for clients that do not expose --ssl-mode.
-            flags.append("--ssl")
-
-            # Legacy verify toggles (commonly available on MariaDB and older MySQL clients).
-            if verify_bool is True and (not supported_options or "ssl-verify-server-cert" in supported_options):
-                flags.append("--ssl-verify-server-cert")
-            elif verify_bool is False and (not supported_options or "skip-ssl-verify-server-cert" in supported_options):
-                flags.append("--skip-ssl-verify-server-cert")
-
-        for opt_keys, cli_option in [
-            (("ca"    , "ssl_ca"    ), "--ssl-ca"    ),
-            (("cert"  , "ssl_cert"  ), "--ssl-cert"  ),
-            (("key"   , "ssl_key"   ), "--ssl-key"   ),
-            (("cipher", "ssl_cipher"), "--ssl-cipher"),
-        ]:
-            value = _pick(*opt_keys)
-            if value is not None and (not supported_options or cli_option.lstrip("-") in supported_options):
-                flags.append(f"{cli_option}={value}")
-
-        return flags
+        return build_ssl_cli_flags(ssl_options, supported_options=supported_options, engine_flavor=engine_flavor)
 
     #-------------------------------------#
     # Method: Initialize the MySQL engine #
     #-------------------------------------#
     def _create_engine(self, params):
-        ssl_connect_args = self._build_ssl_connect_args(params.get("ssl"))
-        engine_kwargs = {"pool_pre_ping": True}
-        if ssl_connect_args:
-            engine_kwargs["connect_args"] = {"ssl": ssl_connect_args}
-
-        sqlalchemy_url = params.get("sqlalchemy_url")
-        if sqlalchemy_url:
-            engine_url = str(sqlalchemy_url)
-        else:
-            sqlalchemy_dialect = str(params.get("sqlalchemy_dialect") or "mysql")
-            sqlalchemy_driver = str(params.get("sqlalchemy_driver") or "pymysql")
-            engine_url = (
-                f'{sqlalchemy_dialect}+{sqlalchemy_driver}://'
-                f'{params["username"]}:{params["password"]}@{params["host_address"]}:{params["port"]}/'
+        # Backward-compatible wrapper around the new engine factory.
+        if isinstance(params, dict):
+            params = ConnectionParams(
+                host_address=params["host_address"],
+                port=params["port"],
+                username=params["username"],
+                password=params["password"],
+                ssl=params.get("ssl"),
+                client_bin=params.get("client_bin"),
+                dump_bin=params.get("dump_bin"),
+                engine_flavor=params.get("engine_flavor"),
+                sqlalchemy_url=params.get("sqlalchemy_url"),
+                sqlalchemy_dialect=params.get("sqlalchemy_dialect"),
+                sqlalchemy_driver=params.get("sqlalchemy_driver"),
             )
-
-        engine = SQLEngine(engine_url, **engine_kwargs)
-        @event.listens_for(engine, "connect")
-        def set_sql_mode(dbapi_conn, _):
-            with dbapi_conn.cursor() as cur:
-                cur.execute("SET SESSION sql_mode = 'STRICT_TRANS_TABLES,NO_ENGINE_SUBSTITUTION'")
-
-        return engine
+        return create_sqlalchemy_engine(params)
 
     def initiate_engine(self, server_name):
         if server_name not in self.params:
@@ -782,6 +608,10 @@ class GraphDB():
     #------------------------------------------------------------------#
     def execute_query_as_safe_inserts(self, engine_name, schema_name, table_name, query, key_column_names, upd_column_names, eval_column_names=None, actions=(), verbose=False, query_id=None):
 
+        # If verbose is enabled, print the command being executed
+        if verbose:
+            print_sql(query, title=f"Executing query as safe inserts{f' [{query_id}]' if query_id else ''}")
+
         # Target table path
         t = target_table_path = f'{schema_name}.{table_name}'
 
@@ -801,10 +631,9 @@ class GraphDB():
               GROUP BY t.{', t.'.join(eval_column_names)}
             """
 
-            # If verbose is enabled, print the command being executed
-            if verbose or 'print' in actions:
-                print_sql(query_eval, title=f"Executing query as safe inserts{f' [{query_id}][eval]' if query_id else ''}")
-
+            # Print the evaluation query
+            if 'print' in actions:
+                print(query_eval)
 
             # Execute the evaluation query and print the results
             out = self.execute_query(engine_name=engine_name, query=query_eval)
@@ -824,20 +653,22 @@ class GraphDB():
                       UPDATE {', '.join([f"{c} = IF(COALESCE({t}.{c}, '__null__') != COALESCE(d.{c}, '__null__'), d.{c}, {t}.{c})" for c in upd_column_names])};
         """
 
+        # Print the commit query
+        if 'print' in actions:
+            print(query_commit)
+
         # Execute the commit query
         if 'commit' in actions:
-
-            # If verbose is enabled, print the command being executed
-            if verbose or 'print' in actions:
-                print_sql(query_commit, title=f"Executing query as safe inserts{f' [{query_id}][commit]' if query_id else ''}")
-
-            # Execute the commit query in the shell
             self.execute_query_in_shell(engine_name=engine_name, query=query_commit)
 
     #------------------------------------------------------------------------------#
     # Method: Executes/Evaluates a query using ON DUPLICATE KEY UPDATE (in chunks) #
     #------------------------------------------------------------------------------#
-    def execute_query_as_safe_inserts_in_chunks(self, engine_name, schema_name, table_name, query, key_column_names, upd_column_names, eval_column_names=None, actions=(), table_to_chunk=None, chunk_filter=None, chunk_size=None, row_id_name=None, show_progress=False, verbose=False, query_id=None):
+    def execute_query_as_safe_inserts_in_chunks(self, engine_name, schema_name, table_name, query, key_column_names, upd_column_names, eval_column_names=None, actions=(), table_to_chunk=None, chunk_size=None, row_id_name=None, show_progress=False, verbose=False, query_id=None):
+
+        # If verbose is enabled, print the command being executed
+        if verbose:
+            print_sql(query, title=f"Executing query as safe inserts in chunks{f' [{query_id}]' if query_id else ''}")
 
         # Target table path
         t = target_table_path = f'{schema_name}.{table_name}'
@@ -864,58 +695,19 @@ class GraphDB():
                     ])}
                 """
 
-            # Determine chunking source and strategy
+            # Get min/max for row_id
             row_id_field = row_id_name.split('.')[-1]  # handle aliases
-            chunk_source = table_to_chunk or f"{schema_name}.{table_name}"
-            use_dense_boundaries = table_to_chunk is not None or chunk_filter is not None
-            filter_clause = f"WHERE {chunk_filter}" if chunk_filter else ""
+            row_num_min = self.execute_query(engine_name, f"SELECT MIN({row_id_field}) FROM {table_to_chunk}")[0][0]
+            row_num_max = self.execute_query(engine_name, f"SELECT MAX({row_id_field}) FROM {table_to_chunk}")[0][0]
 
-            if use_dense_boundaries:
-                # Discover dense chunk boundaries over the actual filtered rows.
-                # Each boundary returned is the last row_id of a chunk_size block.
-                boundaries_query = f"""
-                    WITH ranked AS (
-                        SELECT {row_id_field},
-                               ROW_NUMBER() OVER (ORDER BY {row_id_field}) AS rn
-                          FROM {chunk_source}
-                         {filter_clause}
-                    )
-                    SELECT {row_id_field}
-                      FROM ranked
-                     WHERE rn % {chunk_size} = 0
-                     ORDER BY {row_id_field}
-                """
-                boundaries = [r[0] for r in self.execute_query(engine_name, boundaries_query)]
-
-                # Absolute min/max to bracket the first and last chunk
-                row_num_min = self.execute_query(engine_name, f"SELECT COALESCE(MIN({row_id_field}), 0) FROM {chunk_source} {filter_clause}")[0][0]
-                row_num_max = self.execute_query(engine_name, f"SELECT COALESCE(MAX({row_id_field}), 0) FROM {chunk_source} {filter_clause}")[0][0]
-
-                if row_num_min is None or row_num_max is None or (row_num_min == 0 and row_num_max == 0):
-                    print("⚠️ No rows found to process.")
-                    return
-
-                if not boundaries or boundaries[-1] != row_num_max:
-                    boundaries.append(row_num_max)
-                starts = [row_num_min] + [b + 1 for b in boundaries[:-1]]
-                ends = boundaries
-            else:
-                # Legacy fixed-width row_id range chunking
-                row_num_min = self.execute_query(engine_name, f"SELECT MIN({row_id_field}) FROM {chunk_source}")[0][0]
-                row_num_max = self.execute_query(engine_name, f"SELECT MAX({row_id_field}) FROM {chunk_source}")[0][0]
-
-                if row_num_min is None or row_num_max is None:
-                    print("⚠️ No rows found to process.")
-                    return
-
-                row_num_min -= 1
-                row_num_max += 1
-                starts = list(range(row_num_min, row_num_max, chunk_size))
-                ends = [start + chunk_size - 1 for start in starts]
+            if row_num_min is None or row_num_max is None:
+                print("⚠️ No rows found to process.")
+                return
 
             # Execute each chunk with progress bar
-            for start, end in (tqdm(zip(starts, ends), desc='Executing in chunks', unit='chunk', total=len(starts)) if show_progress else zip(starts, ends)):
-                chunk_condition = f"{'WHERE' if 'WHERE' not in base_query.upper() else 'AND'} {row_id_name} BETWEEN {start} AND {end}"
+            n_rows = row_num_max - row_num_min + 1
+            for offset in tqdm(range(row_num_min, row_num_max + 1, chunk_size), desc='Executing in chunks', unit='chunk', total=(n_rows // chunk_size) + 1) if show_progress else range(row_num_min, row_num_max + 1, chunk_size):
+                chunk_condition = f"{'WHERE' if 'WHERE' not in base_query.upper() else 'AND'} {row_id_name} BETWEEN {offset} AND {offset + chunk_size - 1}"
                 chunked_query = build_chunked_commit_query(chunk_condition)
 
                 if 'print' in actions:
@@ -927,19 +719,13 @@ class GraphDB():
 
         # Evaluate the patch operation
         if 'eval' in actions:
-
-            # Generate evaluation query
             query_eval = f"""
                        SELECT {', '.join(eval_column_names)}, COUNT(*) AS n_to_process
                          FROM ({query}) t
                      GROUP BY {', '.join(eval_column_names)}
             """
-
-            # If verbose is enabled, print the command being executed
-            if verbose:
-                print_sql(query_eval, title=f"Executing query as safe inserts in chunks{f' [{query_id}][eval]' if query_id else ''}")
-
-            # Execute the evaluation query and print the results
+            if 'print' in actions:
+                print(query_eval)
             out = self.execute_query(engine_name=engine_name, query=query_eval)
             if len(out) > 0:
                 df = pd.DataFrame(out, columns=eval_column_names+['# to process'])
@@ -960,20 +746,16 @@ class GraphDB():
                          ])};
         """
 
-        # If 'commit' is in actions, execute the commit query
+        if 'print' in actions:
+            print(query_commit)
+
         if 'commit' in actions:
-
-            # If verbose is enabled, print the command being executed
-            if verbose:
-                print_sql(query_commit, title=f"Executing query as safe inserts in chunks{f' [{query_id}][commit]' if query_id else ''}")
-
-            # Execute the commit query in the shell
             self.execute_query_in_shell(engine_name=engine_name, query=query_commit)
 
     #-------------------------------------------------#
     # Method: Executes a query sequentially by chunks #
     #-------------------------------------------------#
-    def execute_query_in_chunks(self, engine_name, schema_name, table_name, query, has_filters=None, table_to_chunk=None, chunk_filter=None, chunk_size=1000000, row_id_name='row_id', show_progress=False, verbose=False, query_id=None):
+    def execute_query_in_chunks(self, engine_name, schema_name, table_name, query, has_filters=None, chunk_size=1000000, row_id_name='row_id', show_progress=False, verbose=False, query_id=None):
 
         # If verbose is enabled, print the command being executed
         if verbose:
@@ -998,52 +780,16 @@ class GraphDB():
         else:
             row_id_name_no_alias = row_id_name
 
-        # Determine chunking source and strategy
-        chunk_source = table_to_chunk or f"{schema_name}.{table_name}"
-        use_dense_boundaries = table_to_chunk is not None or chunk_filter is not None
-        filter_clause = f"WHERE {chunk_filter}" if chunk_filter else ""
-
-        if use_dense_boundaries:
-            # Discover dense chunk boundaries over the actual filtered rows.
-            # Each boundary returned is the last row_id of a chunk_size block.
-            boundaries_query = f"""
-                WITH ranked AS (
-                    SELECT {row_id_name_no_alias},
-                           ROW_NUMBER() OVER (ORDER BY {row_id_name_no_alias}) AS rn
-                      FROM {chunk_source}
-                     {filter_clause}
-                )
-                SELECT {row_id_name_no_alias}
-                  FROM ranked
-                 WHERE rn % {chunk_size} = 0
-                 ORDER BY {row_id_name_no_alias}
-            """
-            boundaries = [r[0] for r in self.execute_query(engine_name=engine_name, query=boundaries_query, query_id=query_id)]
-
-            # Absolute min/max to bracket the first and last chunk
-            row_num_min = int(self.execute_query(engine_name=engine_name, query=f"SELECT COALESCE(MIN({row_id_name_no_alias}), 0) FROM {chunk_source} {filter_clause}", query_id=query_id)[0][0] or 0)
-            row_num_max = int(self.execute_query(engine_name=engine_name, query=f"SELECT COALESCE(MAX({row_id_name_no_alias}), 0) FROM {chunk_source} {filter_clause}", query_id=query_id)[0][0] or 0)
-
-            if row_num_min == 0 and row_num_max == 0:
-                return
-
-            if not boundaries or boundaries[-1] != row_num_max:
-                boundaries.append(row_num_max)
-            starts = [row_num_min] + [b + 1 for b in boundaries[:-1]]
-            ends = boundaries
-        else:
-            # Legacy fixed-width row_id range chunking
-            row_num_min = int(self.execute_query(engine_name=engine_name, query=f"SELECT COALESCE(MIN({row_id_name_no_alias}), 0) FROM {schema_name}.{table_name}", query_id=query_id)[0][0] or 0) - 1
-            row_num_max = int(self.execute_query(engine_name=engine_name, query=f"SELECT COALESCE(MAX({row_id_name_no_alias}), 0) FROM {schema_name}.{table_name}", query_id=query_id)[0][0] or 0) + 1
-
-            starts = list(range(row_num_min, row_num_max, chunk_size))
-            ends = [start + chunk_size - 1 for start in starts]
+        # Get min and max row_id
+        row_num_min = int(self.execute_query(engine_name=engine_name, query=f"SELECT COALESCE(MIN({row_id_name_no_alias}), 0) FROM {schema_name}.{table_name}", query_id=query_id)[0][0] or 0) - 1
+        row_num_max = int(self.execute_query(engine_name=engine_name, query=f"SELECT COALESCE(MAX({row_id_name_no_alias}), 0) FROM {schema_name}.{table_name}", query_id=query_id)[0][0] or 0) + 1
+        n_rows = row_num_max - row_num_min + 1
 
         # Process table in chunks
-        for start, end in (tqdm(zip(starts, ends), total=len(starts)) if show_progress else zip(starts, ends)):
+        for offset in tqdm(range(row_num_min, row_num_max, chunk_size), total=round(n_rows/chunk_size)) if show_progress else range(row_num_min, row_num_max, int(chunk_size)):
 
             # Generate SQL query
-            sql_query = f"{query} {filter_command} {row_id_name} BETWEEN {start} AND {end};"
+            sql_query = f"{query} {filter_command} {row_id_name} BETWEEN {offset} AND {offset + chunk_size - 1};"
 
             # Execute the query
             self.execute_query_in_shell(engine_name=engine_name, query=sql_query, query_id=query_id)
@@ -1484,10 +1230,10 @@ class GraphDB():
 
         # Drop the target table if it exists
         if drop_table:
-            self.execute_query(engine_name=engine_name, query=f"DROP TABLE IF EXISTS {target_schema_name}.{target_table_name}")
+            self.execute_query(engine_name=engine_name, query=f"DROP TABLE IF EXISTS {target_schema_name}.{target_table_name}", commit=True)
 
         # Execute the CREATE TABLE query
-        self.execute_query(engine_name=engine_name, query=f"CREATE TABLE IF NOT EXISTS {target_schema_name}.{target_table_name} LIKE {source_schema_name}.{source_table_name}")
+        self.execute_query(engine_name=engine_name, query=f"CREATE TABLE IF NOT EXISTS {target_schema_name}.{target_table_name} LIKE {source_schema_name}.{source_table_name}", commit=True)
 
         # Drop all keys in the target table
         if drop_keys:
@@ -1553,14 +1299,20 @@ class GraphDB():
         if drop_table:
             self.drop_table(engine_name=target_engine_name, schema_name=target_schema_name, table_name=target_table_name)
 
-        # Use the target database
-        self.execute_query(engine_name=target_engine_name, query=f'USE {target_schema_name}')
-
-        # Fix missing namespace in the create table SQL
-        create_table_sql = create_table_sql.replace("CREATE TABLE ", f"CREATE TABLE {target_schema_name}.")
+        # Rewrite the CREATE TABLE statement so it points at the requested
+        # target schema and table name.  The source DDL returned by
+        # SHOW CREATE TABLE always begins with:
+        #   CREATE TABLE `<table_name>` (
+        import re
+        create_table_sql = re.sub(
+            r"CREATE TABLE\s+`([^`]+)`",
+            f"CREATE TABLE `{target_schema_name}`.`{target_table_name}`",
+            create_table_sql,
+            count=1,
+        )
 
         # Execute the create table SQL
-        self.execute_query(engine_name=target_engine_name, query=create_table_sql)
+        self.execute_query(engine_name=target_engine_name, query=create_table_sql, commit=True)
 
         # Drop all keys in the target table
         if drop_keys:
