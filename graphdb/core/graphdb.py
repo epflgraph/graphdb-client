@@ -762,7 +762,7 @@ class GraphDB():
             """
 
             # If verbose is enabled, print the command being executed
-            if verbose:
+            if verbose or 'print' in actions:
                 print_sql(query_eval, title=f"Executing query as safe inserts in chunks{f' [{query_id}][eval]' if query_id else ''}")
 
             # Execute the evaluation query and print the results
@@ -790,7 +790,7 @@ class GraphDB():
         if 'commit' in actions:
 
             # If verbose is enabled, print the command being executed
-            if verbose:
+            if verbose or 'print' in actions:
                 print_sql(query_commit, title=f"Executing query as safe inserts in chunks{f' [{query_id}][commit]' if query_id else ''}")
 
             # Execute the commit query in the shell
