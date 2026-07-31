@@ -151,6 +151,59 @@ class TestCliCopyCommand(unittest.TestCase):
 
 
 class TestCliCompareCommand(unittest.TestCase):
+    def test_compare_command_random_sampling_requires_table_name(self):
+        registry = FakeAdapterRegistry({})
+        args = _make_args(
+            ctx=_make_args(registry=registry),
+            from_env="src",
+            from_schema="src",
+            to_env="dst",
+            to_schema="dst",
+            table_name=None,
+            row_count_tolerance=0.10,
+            ignore_warnings=False,
+            random_sampling=True,
+        )
+        with patch("builtins.print") as mock_print:
+            cmd_compare(args)
+            mock_print.assert_any_call("❌ --random-sampling requires --table_name")
+
+    @patch("graphdb.application.compare_service.GraphDB")
+    def test_compare_command_uses_random_sampling(self, mock_graphdb_cls):
+        db = FakeDatabaseAdapter(responses={})
+        schema = FakeSchemaAdapter(tables={"src": ["users"], "dst": ["users"]})
+        config = GraphDBConfig.from_dict({
+            "client_bin": "mysql",
+            "dump_bin": "mysqldump",
+            "default_env": "src",
+            "environments": {
+                "src": {"host_address": "127.0.0.1", "port": 3306, "username": "u", "password": "p"},
+                "dst": {"host_address": "127.0.0.1", "port": 3307, "username": "u", "password": "p"},
+            },
+        })
+        registry = FakeAdapterRegistry({
+            "src": FakeEnvironmentAdapter(database=db, schema=schema),
+            "dst": FakeEnvironmentAdapter(database=db, schema=schema),
+        }, config=config)
+        args = _make_args(
+            ctx=_make_args(registry=registry),
+            from_env="src",
+            from_schema="src",
+            to_env="dst",
+            to_schema="dst",
+            table_name="users",
+            row_count_tolerance=0.10,
+            ignore_warnings=False,
+            random_sampling=True,
+            sample_size=2048,
+        )
+        with patch("builtins.print"):
+            cmd_compare(args)
+        mock_graphdb_cls.assert_called_once()
+        mock_graphdb_cls.return_value.compare_tables_by_random_sampling.assert_called_once()
+        call_kwargs = mock_graphdb_cls.return_value.compare_tables_by_random_sampling.call_args.kwargs
+        self.assertEqual(call_kwargs.get("sample_size"), 2048)
+
     def test_compare_command_prints_table_result(self):
         db = FakeDatabaseAdapter(responses={
             ("SELECT COUNT(*) FROM `src`.`users`", "src"): [[100]],
@@ -170,6 +223,8 @@ class TestCliCompareCommand(unittest.TestCase):
             table_name="users",
             row_count_tolerance=0.10,
             ignore_warnings=False,
+            random_sampling=False,
+            sample_size=1024,
         )
         with patch("builtins.print"):
             cmd_compare(args)

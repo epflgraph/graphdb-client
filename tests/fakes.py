@@ -250,8 +250,9 @@ class FakeEnvironmentAdapter:
 class FakeAdapterRegistry:
     """In-memory registry of fake environment adapters."""
 
-    def __init__(self, adapters: Dict[str, FakeEnvironmentAdapter]) -> None:
+    def __init__(self, adapters: Dict[str, FakeEnvironmentAdapter], config: Optional[Any] = None) -> None:
         self._adapters = adapters
+        self.config = config
 
     def get(self, env_name: Optional[str] = None) -> FakeEnvironmentAdapter:
         if env_name is None:

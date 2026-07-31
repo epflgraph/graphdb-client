@@ -4,6 +4,7 @@ from collections.abc import Mapping, Sequence
 from typing import Any, Dict, List, Optional, Tuple
 
 from graphdb.application.adapter_registry import AdapterRegistry
+from graphdb.core.graphdb import GraphDB
 
 
 class CompareService:
@@ -141,6 +142,40 @@ class CompareService:
             )
             results.append(result)
         return results
+
+    def compare_tables_by_random_sampling(
+        self,
+        source_env: str,
+        source_schema: str,
+        target_env: str,
+        target_schema: str,
+        table_name: str,
+        sample_size: int = 1024,
+    ) -> Dict[str, Any]:
+        """Compare two tables using the legacy GraphDB random-sampling method.
+
+        The underlying implementation prints results directly, so this wrapper
+        only validates table existence and returns a lightweight status dict.
+        """
+        source_adapter = self.registry.get(source_env)
+        target_adapter = self.registry.get(target_env)
+
+        if not source_adapter.table_exists(source_schema, table_name):
+            return {"error": f"Table {source_schema}.{table_name} does not exist in '{source_env}'"}
+        if not target_adapter.table_exists(target_schema, table_name):
+            return {"error": f"Table {target_schema}.{table_name} does not exist in '{target_env}'"}
+
+        graphdb = GraphDB(config=self.registry.config)
+        graphdb.compare_tables_by_random_sampling(
+            source_engine_name=source_env,
+            source_schema_name=source_schema,
+            source_table_name=table_name,
+            target_engine_name=target_env,
+            target_schema_name=target_schema,
+            target_table_name=table_name,
+            sample_size=sample_size,
+        )
+        return {"ok": True}
 
     def _fetch_metadata(self, adapter, schema_name: str, table_name: str) -> Dict[str, Any]:
         rows = adapter.execute(self._COMPARISON_SQL % (schema_name, table_name), schema_name=schema_name)
