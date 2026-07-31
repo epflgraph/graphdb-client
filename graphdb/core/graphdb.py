@@ -3047,14 +3047,22 @@ class GraphDB():
         primary_keys = self.get_primary_keys(engine_name=engine_name, schema_name=schema_name, table_name=table_name)
 
         # Get the column names
-        return_columns = self.get_column_names(engine_name=engine_name, schema_name=schema_name, table_name=table_name)
+        all_columns = self.get_column_names(engine_name=engine_name, schema_name=schema_name, table_name=table_name)
 
-        # Remove row_id from the return columns
-        if 'row_id' in return_columns:
-            return_columns.remove('row_id')
+        # Columns used for data comparison: exclude row_id and primary keys
+        data_columns = [c for c in all_columns if c != 'row_id' and c not in primary_keys]
+
+        # SELECT primary keys first, then data columns, so row offsets align
+        select_columns = list(dict.fromkeys(primary_keys + data_columns))
 
         # Generate the SQL query for sample tuples
-        sql_query = f"SELECT {', '.join(return_columns)} FROM {schema_name}.{table_name} WHERE ({', '.join(primary_keys)}) IN ({', '.join([str(r) for r in primary_key_set])});"
+        def _format_pk(pk_values):
+            if len(pk_values) == 1:
+                return str(pk_values[0])
+            return f"({', '.join(str(v) for v in pk_values)})"
+
+        pk_placeholders = ', '.join(_format_pk(pk) for pk in primary_key_set)
+        sql_query = f"SELECT {', '.join(select_columns)} FROM {schema_name}.{table_name} WHERE ({', '.join(primary_keys)}) IN ({pk_placeholders});"
 
         # Execute the query
         row_set = self.execute_query(engine_name=engine_name, query=sql_query)
@@ -3063,11 +3071,8 @@ class GraphDB():
         if not return_as_dict:
             return row_set
 
-        # Remove the primary keys from the return columns
-        return_columns = [c for c in return_columns if c not in primary_keys]
-
         # Convert to dictionary in format {primary_key: {column_name: value}}
-        row_set_dict = {tuple(r[0:len(primary_keys)]): dict(zip(return_columns, r[len(primary_keys):])) for r in row_set}
+        row_set_dict = {tuple(r[0:len(primary_keys)]): dict(zip(data_columns, r[len(primary_keys):])) for r in row_set}
 
         # Execute the query
         return row_set_dict
