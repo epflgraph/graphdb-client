@@ -3219,7 +3219,11 @@ class GraphDB():
         #----------------------------------------------------#
 
         print('')
-        if test_results['deleted_rows_test'] and test_results['column_missing_or_renamed_test'] and test_results['custom_column_mismatch_test'] and test_results['set_to_null_test'] and test_results['median_score_diff_test']:
+        if stats['existing_rows'] == 0 and stats['new_rows'] > 0 and stats['deleted_rows'] == 0:
+            print("Test result: \033[33mTarget table is empty. All rows are new.\033[0m")
+        elif stats['existing_rows'] == 0 and stats['deleted_rows'] > 0 and stats['new_rows'] == 0:
+            print("Test result: \033[31mSource table is empty. All rows risk being deleted in target.\033[0m")
+        elif test_results['deleted_rows_test'] and test_results['column_missing_or_renamed_test'] and test_results['custom_column_mismatch_test'] and test_results['set_to_null_test'] and test_results['median_score_diff_test']:
             if test_results['warning_flag']:
                 print("Test result: \033[33mMinor changes detected.\033[0m")
             else:
