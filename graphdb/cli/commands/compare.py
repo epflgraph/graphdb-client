@@ -57,19 +57,29 @@ def cmd_compare(args):
     service = CompareService(args.ctx.registry)
 
     if getattr(args, "random_sampling", False):
-        if not args.table_name:
-            print("❌ --random-sampling requires --table_name")
+        if args.table_name:
+            result = service.compare_tables_by_random_sampling(
+                args.from_env,
+                args.from_schema,
+                args.to_env,
+                args.to_schema,
+                args.table_name,
+                sample_size=args.sample_size,
+            )
+            if "error" in result:
+                print(f"❌ {result['error']}")
             return
-        result = service.compare_tables_by_random_sampling(
+
+        results = service.compare_databases_by_random_sampling(
             args.from_env,
             args.from_schema,
             args.to_env,
             args.to_schema,
-            args.table_name,
             sample_size=args.sample_size,
         )
-        if "error" in result:
-            print(f"❌ {result['error']}")
+        for result in results:
+            if "error" in result:
+                print(f"❌ {result['error']}")
         return
 
     if args.table_name:

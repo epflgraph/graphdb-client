@@ -151,8 +151,23 @@ class TestCliCopyCommand(unittest.TestCase):
 
 
 class TestCliCompareCommand(unittest.TestCase):
-    def test_compare_command_random_sampling_requires_table_name(self):
-        registry = FakeAdapterRegistry({})
+    @patch("graphdb.application.compare_service.GraphDB")
+    def test_compare_command_random_sampling_without_table_iterates_common_tables(self, mock_graphdb_cls):
+        db = FakeDatabaseAdapter(responses={})
+        schema = FakeSchemaAdapter(tables={"src": ["users", "posts"], "dst": ["users", "comments"]})
+        config = GraphDBConfig.from_dict({
+            "client_bin": "mysql",
+            "dump_bin": "mysqldump",
+            "default_env": "src",
+            "environments": {
+                "src": {"host_address": "127.0.0.1", "port": 3306, "username": "u", "password": "p"},
+                "dst": {"host_address": "127.0.0.1", "port": 3307, "username": "u", "password": "p"},
+            },
+        })
+        registry = FakeAdapterRegistry({
+            "src": FakeEnvironmentAdapter(database=db, schema=schema),
+            "dst": FakeEnvironmentAdapter(database=db, schema=schema),
+        }, config=config)
         args = _make_args(
             ctx=_make_args(registry=registry),
             from_env="src",
@@ -163,10 +178,16 @@ class TestCliCompareCommand(unittest.TestCase):
             row_count_tolerance=0.10,
             ignore_warnings=False,
             random_sampling=True,
+            sample_size=512,
         )
-        with patch("builtins.print") as mock_print:
+        with patch("builtins.print"):
             cmd_compare(args)
-            mock_print.assert_any_call("❌ --random-sampling requires --table_name")
+        mock_graphdb_cls.assert_called_once()
+        sampled_tables = {
+            call.kwargs.get("source_table_name")
+            for call in mock_graphdb_cls.return_value.compare_tables_by_random_sampling.call_args_list
+        }
+        self.assertEqual(sampled_tables, {"users"})
 
     @patch("graphdb.application.compare_service.GraphDB")
     def test_compare_command_uses_random_sampling(self, mock_graphdb_cls):

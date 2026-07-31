@@ -2824,7 +2824,6 @@ class GraphDB():
 
             # Return empty set if no rows in the table
             if max_row_id == 0:
-                sysmsg.warning(f"No rows found in table {schema_name}.{table_name}.")
                 return []
 
             # Generate random row_id set
@@ -2832,7 +2831,6 @@ class GraphDB():
 
             # Return empty set if no rows in the table
             if len(random_primary_key_set) == 0:
-                sysmsg.warning(f"No rows found in table {schema_name}.{table_name}.")
                 return []
 
             # Fetch respective primary keys set
@@ -2923,6 +2921,13 @@ class GraphDB():
         if table_type == 'doc_profile':
             pass
 
+        # Print a clear header for this table comparison
+        header_label = f" {target_table_name} "
+        print('')
+        print('╔' + '═' * 78 + '╗')
+        print('║' + header_label.center(78) + '║')
+        print('╚' + '═' * 78 + '╝')
+
         #------------------------------------------#
         # Generate the SQL query for sample tuples #
         #------------------------------------------#
@@ -2933,7 +2938,7 @@ class GraphDB():
 
         # Return if no rows found
         if len(random_primary_key_set) == 0:
-            sysmsg.warning(f"No rows found in either source or target table for comparison.")
+            print(f"⚠️  No rows found in either source or target table for comparison.")
             return
 
         # Get the rows by primary key set (source and target)
@@ -3055,7 +3060,7 @@ class GraphDB():
                                     custom_column_mismatch_detected = True
 
                                     # Append the mismatch changes stack
-                                    mismatch_changes_stack += [(f'{k}: [S] {source_row_set_dict[t][k]} ... [T] {target_row_set_dict[t][k]}')]
+                                    mismatch_changes_stack += [(f'{k}: [S] {str(source_row_set_dict[t][k])[0:64]} ... [T] {str(target_row_set_dict[t][k])[0:64]}')]
 
                                 # Check if the value is set to NULL from source to target
                                 if source_row_set_dict[t][k] is None:
@@ -3152,10 +3157,6 @@ class GraphDB():
             percent_set_to_null_colour = '\033[37m'
 
         # Print the stats
-        print('')
-        print('==============================================================================================')
-        print('')
-        print(f"Results for \033[36m{target_table_name}:\033[0m")
         print('')
         print(f" - Sample size ....... {sample_size}")
         print(f" - Existing rows ..... {stats['existing_rows']} {' '*(8-len(str(stats['existing_rows'])))} {stats['percent_existing_rows']:.1f}%")

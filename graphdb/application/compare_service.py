@@ -177,6 +177,35 @@ class CompareService:
         )
         return {"ok": True}
 
+    def compare_databases_by_random_sampling(
+        self,
+        source_env: str,
+        source_schema: str,
+        target_env: str,
+        target_schema: str,
+        sample_size: int = 1024,
+    ) -> List[Dict[str, Any]]:
+        """Compare all tables present in both schemas using random sampling."""
+        source_adapter = self.registry.get(source_env)
+        target_adapter = self.registry.get(target_env)
+
+        source_tables = set(source_adapter.get_tables(source_schema))
+        target_tables = set(target_adapter.get_tables(target_schema))
+        common_tables = sorted(source_tables & target_tables)
+
+        results = []
+        for table_name in common_tables:
+            result = self.compare_tables_by_random_sampling(
+                source_env,
+                source_schema,
+                target_env,
+                target_schema,
+                table_name,
+                sample_size=sample_size,
+            )
+            results.append(result)
+        return results
+
     def _fetch_metadata(self, adapter, schema_name: str, table_name: str) -> Dict[str, Any]:
         rows = adapter.execute(self._COMPARISON_SQL % (schema_name, table_name), schema_name=schema_name)
         return self._first_row_as_dict(rows, columns=self._EXPECTED_COLS) or {}
