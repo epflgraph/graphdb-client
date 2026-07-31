@@ -608,10 +608,6 @@ class GraphDB():
     #------------------------------------------------------------------#
     def execute_query_as_safe_inserts(self, engine_name, schema_name, table_name, query, key_column_names, upd_column_names, eval_column_names=None, actions=(), verbose=False, query_id=None):
 
-        # If verbose is enabled, print the command being executed
-        if verbose:
-            print_sql(query, title=f"Executing query as safe inserts{f' [{query_id}]' if query_id else ''}")
-
         # Target table path
         t = target_table_path = f'{schema_name}.{table_name}'
 
@@ -631,9 +627,10 @@ class GraphDB():
               GROUP BY t.{', t.'.join(eval_column_names)}
             """
 
-            # Print the evaluation query
-            if 'print' in actions:
-                print(query_eval)
+            # If verbose is enabled, print the command being executed
+            if verbose or 'print' in actions:
+                print_sql(query_eval, title=f"Executing query as safe inserts{f' [{query_id}][eval]' if query_id else ''}")
+
 
             # Execute the evaluation query and print the results
             out = self.execute_query(engine_name=engine_name, query=query_eval)
@@ -653,22 +650,20 @@ class GraphDB():
                       UPDATE {', '.join([f"{c} = IF(COALESCE({t}.{c}, '__null__') != COALESCE(d.{c}, '__null__'), d.{c}, {t}.{c})" for c in upd_column_names])};
         """
 
-        # Print the commit query
-        if 'print' in actions:
-            print(query_commit)
-
         # Execute the commit query
         if 'commit' in actions:
+
+            # If verbose is enabled, print the command being executed
+            if verbose or 'print' in actions:
+                print_sql(query_commit, title=f"Executing query as safe inserts{f' [{query_id}][commit]' if query_id else ''}")
+
+            # Execute the commit query in the shell
             self.execute_query_in_shell(engine_name=engine_name, query=query_commit)
 
     #------------------------------------------------------------------------------#
     # Method: Executes/Evaluates a query using ON DUPLICATE KEY UPDATE (in chunks) #
     #------------------------------------------------------------------------------#
-    def execute_query_as_safe_inserts_in_chunks(self, engine_name, schema_name, table_name, query, key_column_names, upd_column_names, eval_column_names=None, actions=(), table_to_chunk=None, chunk_size=None, row_id_name=None, show_progress=False, verbose=False, query_id=None):
-
-        # If verbose is enabled, print the command being executed
-        if verbose:
-            print_sql(query, title=f"Executing query as safe inserts in chunks{f' [{query_id}]' if query_id else ''}")
+    def execute_query_as_safe_inserts_in_chunks(self, engine_name, schema_name, table_name, query, key_column_names, upd_column_names, eval_column_names=None, actions=(), table_to_chunk=None, chunk_filter=None, chunk_size=None, row_id_name=None, show_progress=False, verbose=False, query_id=None):
 
         # Target table path
         t = target_table_path = f'{schema_name}.{table_name}'
@@ -684,10 +679,10 @@ class GraphDB():
                 return f"""
                     INSERT INTO {target_table_path}
                                ({', '.join(key_column_names)}{', ' if upd_column_names else ''}{', '.join(upd_column_names)})
-                         SELECT {', '.join(key_column_names)}{', ' if upd_column_names else ''}{', '.join(upd_column_names)}
-                           FROM (
-                                {base_query} {chunk_condition}
-                                ) AS d
+                          SELECT {', '.join(key_column_names)}{', ' if upd_column_names else ''}{', '.join(upd_column_names)}
+                            FROM (
+                                 {base_query} {chunk_condition}
+                                 ) AS d
                 ON DUPLICATE KEY UPDATE
                     {', '.join([
                         f"{c} = IF(COALESCE({t}.{c}, '__null__') != COALESCE(d.{c}, '__null__'), d.{c}, {t}.{c})"
@@ -695,19 +690,58 @@ class GraphDB():
                     ])}
                 """
 
-            # Get min/max for row_id
+            # Determine chunking source and strategy
             row_id_field = row_id_name.split('.')[-1]  # handle aliases
-            row_num_min = self.execute_query(engine_name, f"SELECT MIN({row_id_field}) FROM {table_to_chunk}")[0][0]
-            row_num_max = self.execute_query(engine_name, f"SELECT MAX({row_id_field}) FROM {table_to_chunk}")[0][0]
+            chunk_source = table_to_chunk or f"{schema_name}.{table_name}"
+            use_dense_boundaries = table_to_chunk is not None or chunk_filter is not None
+            filter_clause = f"WHERE {chunk_filter}" if chunk_filter else ""
 
-            if row_num_min is None or row_num_max is None:
-                print("⚠️ No rows found to process.")
-                return
+            if use_dense_boundaries:
+                # Discover dense chunk boundaries over the actual filtered rows.
+                # Each boundary returned is the last row_id of a chunk_size block.
+                boundaries_query = f"""
+                    WITH ranked AS (
+                        SELECT {row_id_field},
+                               ROW_NUMBER() OVER (ORDER BY {row_id_field}) AS rn
+                          FROM {chunk_source}
+                         {filter_clause}
+                    )
+                    SELECT {row_id_field}
+                      FROM ranked
+                     WHERE rn % {chunk_size} = 0
+                     ORDER BY {row_id_field}
+                """
+                boundaries = [r[0] for r in self.execute_query(engine_name, boundaries_query)]
+
+                # Absolute min/max to bracket the first and last chunk
+                row_num_min = self.execute_query(engine_name, f"SELECT COALESCE(MIN({row_id_field}), 0) FROM {chunk_source} {filter_clause}")[0][0]
+                row_num_max = self.execute_query(engine_name, f"SELECT COALESCE(MAX({row_id_field}), 0) FROM {chunk_source} {filter_clause}")[0][0]
+
+                if row_num_min is None or row_num_max is None or (row_num_min == 0 and row_num_max == 0):
+                    print("⚠️ No rows found to process.")
+                    return
+
+                if not boundaries or boundaries[-1] != row_num_max:
+                    boundaries.append(row_num_max)
+                starts = [row_num_min] + [b + 1 for b in boundaries[:-1]]
+                ends = boundaries
+            else:
+                # Legacy fixed-width row_id range chunking
+                row_num_min = self.execute_query(engine_name, f"SELECT MIN({row_id_field}) FROM {chunk_source}")[0][0]
+                row_num_max = self.execute_query(engine_name, f"SELECT MAX({row_id_field}) FROM {chunk_source}")[0][0]
+
+                if row_num_min is None or row_num_max is None:
+                    print("⚠️ No rows found to process.")
+                    return
+
+                row_num_min -= 1
+                row_num_max += 1
+                starts = list(range(row_num_min, row_num_max, chunk_size))
+                ends = [start + chunk_size - 1 for start in starts]
 
             # Execute each chunk with progress bar
-            n_rows = row_num_max - row_num_min + 1
-            for offset in tqdm(range(row_num_min, row_num_max + 1, chunk_size), desc='Executing in chunks', unit='chunk', total=(n_rows // chunk_size) + 1) if show_progress else range(row_num_min, row_num_max + 1, chunk_size):
-                chunk_condition = f"{'WHERE' if 'WHERE' not in base_query.upper() else 'AND'} {row_id_name} BETWEEN {offset} AND {offset + chunk_size - 1}"
+            for start, end in (tqdm(zip(starts, ends), desc='Executing in chunks', unit='chunk', total=len(starts)) if show_progress else zip(starts, ends)):
+                chunk_condition = f"{'WHERE' if 'WHERE' not in base_query.upper() else 'AND'} {row_id_name} BETWEEN {start} AND {end}"
                 chunked_query = build_chunked_commit_query(chunk_condition)
 
                 if 'print' in actions:
@@ -719,13 +753,19 @@ class GraphDB():
 
         # Evaluate the patch operation
         if 'eval' in actions:
+
+            # Generate evaluation query
             query_eval = f"""
                        SELECT {', '.join(eval_column_names)}, COUNT(*) AS n_to_process
                          FROM ({query}) t
                      GROUP BY {', '.join(eval_column_names)}
             """
-            if 'print' in actions:
-                print(query_eval)
+
+            # If verbose is enabled, print the command being executed
+            if verbose:
+                print_sql(query_eval, title=f"Executing query as safe inserts in chunks{f' [{query_id}][eval]' if query_id else ''}")
+
+            # Execute the evaluation query and print the results
             out = self.execute_query(engine_name=engine_name, query=query_eval)
             if len(out) > 0:
                 df = pd.DataFrame(out, columns=eval_column_names+['# to process'])
@@ -746,16 +786,20 @@ class GraphDB():
                          ])};
         """
 
-        if 'print' in actions:
-            print(query_commit)
-
+        # If 'commit' is in actions, execute the commit query
         if 'commit' in actions:
+
+            # If verbose is enabled, print the command being executed
+            if verbose:
+                print_sql(query_commit, title=f"Executing query as safe inserts in chunks{f' [{query_id}][commit]' if query_id else ''}")
+
+            # Execute the commit query in the shell
             self.execute_query_in_shell(engine_name=engine_name, query=query_commit)
 
     #-------------------------------------------------#
     # Method: Executes a query sequentially by chunks #
     #-------------------------------------------------#
-    def execute_query_in_chunks(self, engine_name, schema_name, table_name, query, has_filters=None, chunk_size=1000000, row_id_name='row_id', show_progress=False, verbose=False, query_id=None):
+    def execute_query_in_chunks(self, engine_name, schema_name, table_name, query, has_filters=None, table_to_chunk=None, chunk_filter=None, chunk_size=1000000, row_id_name='row_id', show_progress=False, verbose=False, query_id=None):
 
         # If verbose is enabled, print the command being executed
         if verbose:
@@ -780,16 +824,52 @@ class GraphDB():
         else:
             row_id_name_no_alias = row_id_name
 
-        # Get min and max row_id
-        row_num_min = int(self.execute_query(engine_name=engine_name, query=f"SELECT COALESCE(MIN({row_id_name_no_alias}), 0) FROM {schema_name}.{table_name}", query_id=query_id)[0][0] or 0) - 1
-        row_num_max = int(self.execute_query(engine_name=engine_name, query=f"SELECT COALESCE(MAX({row_id_name_no_alias}), 0) FROM {schema_name}.{table_name}", query_id=query_id)[0][0] or 0) + 1
-        n_rows = row_num_max - row_num_min + 1
+        # Determine chunking source and strategy
+        chunk_source = table_to_chunk or f"{schema_name}.{table_name}"
+        use_dense_boundaries = table_to_chunk is not None or chunk_filter is not None
+        filter_clause = f"WHERE {chunk_filter}" if chunk_filter else ""
+
+        if use_dense_boundaries:
+            # Discover dense chunk boundaries over the actual filtered rows.
+            # Each boundary returned is the last row_id of a chunk_size block.
+            boundaries_query = f"""
+                WITH ranked AS (
+                    SELECT {row_id_name_no_alias},
+                           ROW_NUMBER() OVER (ORDER BY {row_id_name_no_alias}) AS rn
+                      FROM {chunk_source}
+                     {filter_clause}
+                )
+                SELECT {row_id_name_no_alias}
+                  FROM ranked
+                 WHERE rn % {chunk_size} = 0
+                 ORDER BY {row_id_name_no_alias}
+            """
+            boundaries = [r[0] for r in self.execute_query(engine_name=engine_name, query=boundaries_query, query_id=query_id)]
+
+            # Absolute min/max to bracket the first and last chunk
+            row_num_min = int(self.execute_query(engine_name=engine_name, query=f"SELECT COALESCE(MIN({row_id_name_no_alias}), 0) FROM {chunk_source} {filter_clause}", query_id=query_id)[0][0] or 0)
+            row_num_max = int(self.execute_query(engine_name=engine_name, query=f"SELECT COALESCE(MAX({row_id_name_no_alias}), 0) FROM {chunk_source} {filter_clause}", query_id=query_id)[0][0] or 0)
+
+            if row_num_min == 0 and row_num_max == 0:
+                return
+
+            if not boundaries or boundaries[-1] != row_num_max:
+                boundaries.append(row_num_max)
+            starts = [row_num_min] + [b + 1 for b in boundaries[:-1]]
+            ends = boundaries
+        else:
+            # Legacy fixed-width row_id range chunking
+            row_num_min = int(self.execute_query(engine_name=engine_name, query=f"SELECT COALESCE(MIN({row_id_name_no_alias}), 0) FROM {schema_name}.{table_name}", query_id=query_id)[0][0] or 0) - 1
+            row_num_max = int(self.execute_query(engine_name=engine_name, query=f"SELECT COALESCE(MAX({row_id_name_no_alias}), 0) FROM {schema_name}.{table_name}", query_id=query_id)[0][0] or 0) + 1
+
+            starts = list(range(row_num_min, row_num_max, chunk_size))
+            ends = [start + chunk_size - 1 for start in starts]
 
         # Process table in chunks
-        for offset in tqdm(range(row_num_min, row_num_max, chunk_size), total=round(n_rows/chunk_size)) if show_progress else range(row_num_min, row_num_max, int(chunk_size)):
+        for start, end in (tqdm(zip(starts, ends), total=len(starts)) if show_progress else zip(starts, ends)):
 
             # Generate SQL query
-            sql_query = f"{query} {filter_command} {row_id_name} BETWEEN {offset} AND {offset + chunk_size - 1};"
+            sql_query = f"{query} {filter_command} {row_id_name} BETWEEN {start} AND {end};"
 
             # Execute the query
             self.execute_query_in_shell(engine_name=engine_name, query=sql_query, query_id=query_id)
@@ -1230,10 +1310,10 @@ class GraphDB():
 
         # Drop the target table if it exists
         if drop_table:
-            self.execute_query(engine_name=engine_name, query=f"DROP TABLE IF EXISTS {target_schema_name}.{target_table_name}", commit=True)
+            self.execute_query(engine_name=engine_name, query=f"DROP TABLE IF EXISTS {target_schema_name}.{target_table_name}")
 
         # Execute the CREATE TABLE query
-        self.execute_query(engine_name=engine_name, query=f"CREATE TABLE IF NOT EXISTS {target_schema_name}.{target_table_name} LIKE {source_schema_name}.{source_table_name}", commit=True)
+        self.execute_query(engine_name=engine_name, query=f"CREATE TABLE IF NOT EXISTS {target_schema_name}.{target_table_name} LIKE {source_schema_name}.{source_table_name}")
 
         # Drop all keys in the target table
         if drop_keys:
@@ -1299,20 +1379,14 @@ class GraphDB():
         if drop_table:
             self.drop_table(engine_name=target_engine_name, schema_name=target_schema_name, table_name=target_table_name)
 
-        # Rewrite the CREATE TABLE statement so it points at the requested
-        # target schema and table name.  The source DDL returned by
-        # SHOW CREATE TABLE always begins with:
-        #   CREATE TABLE `<table_name>` (
-        import re
-        create_table_sql = re.sub(
-            r"CREATE TABLE\s+`([^`]+)`",
-            f"CREATE TABLE `{target_schema_name}`.`{target_table_name}`",
-            create_table_sql,
-            count=1,
-        )
+        # Use the target database
+        self.execute_query(engine_name=target_engine_name, query=f'USE {target_schema_name}')
+
+        # Fix missing namespace in the create table SQL
+        create_table_sql = create_table_sql.replace("CREATE TABLE ", f"CREATE TABLE {target_schema_name}.")
 
         # Execute the create table SQL
-        self.execute_query(engine_name=target_engine_name, query=create_table_sql, commit=True)
+        self.execute_query(engine_name=target_engine_name, query=create_table_sql)
 
         # Drop all keys in the target table
         if drop_keys:
