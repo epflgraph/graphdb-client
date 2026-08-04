@@ -2862,6 +2862,80 @@ class GraphDB():
         # Return the random sample tuples
         return random_primary_key_set
 
+    def get_random_uid_set(self, engine_name, schema_name, table_name, sample_size=100, partition_by=None, use_row_id=False):
+        """
+        Return a random sample of tuples for the unique key named 'uid'.
+        Similar to get_random_primary_key_set, but uses the columns of the
+        'uid' index instead of the PRIMARY KEY columns.
+        """
+
+        # Get the columns that make up the 'uid' unique key
+        keys = self.get_keys(engine_name=engine_name, schema_name=schema_name, table_name=table_name)
+        uid_columns = keys.get('uid', [])
+        if not uid_columns:
+            return []
+
+        # Quote identifiers safely
+        q_schema = self._q(schema_name)
+        q_table = self._q(table_name)
+        q_uid_columns = [self._q(c) for c in uid_columns]
+
+        # Using row_id?
+        # Yes.
+        if use_row_id:
+
+            # Get maximum row_id
+            max_row_id = self.execute_query(engine_name=engine_name, query=f"SELECT COALESCE(MAX(row_id), 0) FROM {q_schema}.{q_table}")
+
+            # Extract (and fix) the max_row_id value
+            if type(max_row_id) == list and len(max_row_id) > 0:
+                max_row_id = max_row_id[0][0]
+            else:
+                max_row_id = 0
+
+            # Return empty set if no rows in the table
+            if max_row_id == 0:
+                return []
+
+            # Generate random row_id set
+            random_row_id_set = sorted([random.randint(1, max_row_id) for _ in range(sample_size)])
+
+            # Return empty set if no rows in the table
+            if len(random_row_id_set) == 0:
+                return []
+
+            # Fetch respective uid tuples set
+            random_uid_set = self.execute_query(engine_name=engine_name, query=f"SELECT {', '.join(q_uid_columns)} FROM {q_schema}.{q_table} WHERE row_id IN ({', '.join([str(r) for r in random_row_id_set])});")
+
+        # No.
+        else:
+
+            # Generate the SQL query for sample tuples
+            sql_query = f"SELECT {', '.join(q_uid_columns)} FROM {q_schema}.{q_table} ORDER BY RAND() LIMIT {sample_size};"
+
+            # Generate the SQL query for sample tuples with partitioning
+            if partition_by in uid_columns:
+
+                # Fetch all partition values
+                partition_column_possible_vals = [r[0] for r in self.execute_query(engine_name=engine_name, query=f"SELECT DISTINCT {self._q(partition_by)} FROM {q_schema}.{q_table};")]
+
+                # Loop over the partition values
+                n_partitions = len(partition_column_possible_vals)
+                if n_partitions > 0:
+                    per_partition = round(sample_size / n_partitions)
+                    sql_query_stack = []
+                    for colval in partition_column_possible_vals:
+                        sql_query_stack.append(
+                            f"(SELECT {', '.join(q_uid_columns)} FROM {q_schema}.{q_table} WHERE {self._q(partition_by)} = '{colval}' ORDER BY RAND() LIMIT {per_partition})"
+                        )
+                    sql_query = ' UNION ALL '.join(sql_query_stack)
+
+            # Execute the query
+            random_uid_set = self.execute_query(engine_name=engine_name, query=sql_query)
+
+        # Return the random sample tuples
+        return random_uid_set
+
     #-----------------------------------------------#
     # Method: Compare two tables by random sampling #
     #-----------------------------------------------#
@@ -2935,6 +3009,13 @@ class GraphDB():
         # Get random primary key set
         random_primary_key_set  = self.get_random_primary_key_set(engine_name=source_engine_name, schema_name=source_schema_name, table_name=source_table_name, sample_size=round(sample_size/2), partition_by='object_type', use_row_id=True)
         random_primary_key_set += self.get_random_primary_key_set(engine_name=target_engine_name, schema_name=target_schema_name, table_name=target_table_name, sample_size=round(sample_size/2), partition_by='object_type', use_row_id=True)
+
+
+        random_uid_set = self.get_random_uid_set(engine_name=source_engine_name, schema_name=source_schema_name, table_name=source_table_name, sample_size=round(sample_size/2), partition_by=None, use_row_id=False)
+
+        for pk in random_uid_set:
+            print(f"🔹 Random primary key tuple: {pk}")
+        return
 
         # Return if no rows found
         if len(random_primary_key_set) == 0:
