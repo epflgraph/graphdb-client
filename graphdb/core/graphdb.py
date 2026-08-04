@@ -2978,6 +2978,71 @@ class GraphDB():
     #-----------------------------------------------#
     # Method: Compare two tables by random sampling #
     #-----------------------------------------------#
+    def get_rows_by_uid_set(self, engine_name, schema_name, table_name, uid_set, return_as_dict=False):
+        """
+        Fetch rows from a table using tuples from the 'uid' unique key.
+        Similar to get_rows_by_primary_key_set, but uses the columns of the
+        'uid' index instead of the PRIMARY KEY columns.
+        """
+
+        # Get the columns that make up the 'uid' unique key
+        keys = self.get_keys(engine_name=engine_name, schema_name=schema_name, table_name=table_name)
+        uid_columns = keys.get('uid', [])
+        if not uid_columns:
+            return [] if not return_as_dict else {}
+
+        # Get all column names
+        all_columns = self.get_column_names(engine_name=engine_name, schema_name=schema_name, table_name=table_name)
+
+        # Columns used for data comparison: exclude row_id and uid columns
+        data_columns = [c for c in all_columns if c != 'row_id' and c not in uid_columns]
+
+        # SELECT uid columns first, then data columns, so row offsets align
+        select_columns = list(dict.fromkeys(uid_columns + data_columns))
+
+        # Quote identifiers safely
+        q_schema = self._q(schema_name)
+        q_table = self._q(table_name)
+        q_uid_columns = [self._q(c) for c in uid_columns]
+        q_select_columns = [self._q(c) for c in select_columns]
+
+        # Helper to format a Python value as a SQL literal
+        def _sql_literal(v):
+            if v is None:
+                return 'NULL'
+            if isinstance(v, bool):
+                return '1' if v else '0'
+            if isinstance(v, (int, float)):
+                return str(v)
+            return "'" + str(v).replace("'", "''") + "'"
+
+        # Generate the SQL query for sample tuples
+        def _format_uid(uid_values):
+            if len(uid_values) == 1:
+                return _sql_literal(uid_values[0])
+            return f"({', '.join(_sql_literal(v) for v in uid_values)})"
+
+        if not uid_set:
+            return [] if not return_as_dict else {}
+
+        uid_placeholders = ', '.join(_format_uid(uid) for uid in uid_set)
+        sql_query = f"SELECT {', '.join(q_select_columns)} FROM {q_schema}.{q_table} WHERE ({', '.join(q_uid_columns)}) IN ({uid_placeholders});"
+
+        # Execute the query
+        row_set = self.execute_query(engine_name=engine_name, query=sql_query)
+
+        # Return as list of tuples
+        if not return_as_dict:
+            return row_set
+
+        # Convert to dictionary in format {uid_tuple: {column_name: value}}
+        row_set_dict = {tuple(r[0:len(uid_columns)]): dict(zip(data_columns, r[len(uid_columns):])) for r in row_set}
+
+        return row_set_dict
+
+    #-----------------------------------------------#
+    # Method: Compare two tables by random sampling #
+    #-----------------------------------------------#
     def compare_tables_by_random_sampling(self, source_engine_name, source_schema_name, source_table_name, target_engine_name, target_schema_name, target_table_name, sample_size=1024):
 
         # Check if the source table exists
@@ -3006,25 +3071,26 @@ class GraphDB():
         # Generate the SQL query for sample tuples #
         #------------------------------------------#
 
-        # Get random primary key set
-        random_primary_key_set  = self.get_random_primary_key_set(engine_name=source_engine_name, schema_name=source_schema_name, table_name=source_table_name, sample_size=round(sample_size/2), partition_by='object_type', use_row_id=True)
-        random_primary_key_set += self.get_random_primary_key_set(engine_name=target_engine_name, schema_name=target_schema_name, table_name=target_table_name, sample_size=round(sample_size/2), partition_by='object_type', use_row_id=True)
+        # This comparison requires a 'uid' unique key to reliably match rows
+        # across schemas, because row_id-based matching is not reliable when
+        # auto-increment values differ between environments.
+        source_keys = self.get_keys(engine_name=source_engine_name, schema_name=source_schema_name, table_name=source_table_name)
+        if 'uid' not in source_keys:
+            sysmsg.error(f"🚨 Table {source_schema_name}.{source_table_name} does not have a 'uid' unique key. Cannot compare by uid.")
+            return
 
-
-        random_uid_set = self.get_random_uid_set(engine_name=source_engine_name, schema_name=source_schema_name, table_name=source_table_name, sample_size=round(sample_size/2), partition_by=None, use_row_id=False)
-
-        for pk in random_uid_set:
-            print(f"🔹 Random primary key tuple: {pk}")
-        return
+        # Get random uid tuple set
+        random_key_set  = self.get_random_uid_set(engine_name=source_engine_name, schema_name=source_schema_name, table_name=source_table_name, sample_size=round(sample_size/2), partition_by=None, use_row_id=False)
+        random_key_set += self.get_random_uid_set(engine_name=target_engine_name, schema_name=target_schema_name, table_name=target_table_name, sample_size=round(sample_size/2), partition_by=None, use_row_id=False)
 
         # Return if no rows found
-        if len(random_primary_key_set) == 0:
+        if len(random_key_set) == 0:
             print(f"⚠️  No rows found in either source or target table for comparison.")
             return
 
-        # Get the rows by primary key set (source and target)
-        source_row_set_dict = self.get_rows_by_primary_key_set(engine_name=source_engine_name, schema_name=source_schema_name, table_name=source_table_name, primary_key_set=random_primary_key_set, return_as_dict=True)
-        target_row_set_dict = self.get_rows_by_primary_key_set(engine_name=target_engine_name, schema_name=target_schema_name, table_name=target_table_name, primary_key_set=random_primary_key_set, return_as_dict=True)
+        # Get the rows by uid set (source and target)
+        source_row_set_dict = self.get_rows_by_uid_set(engine_name=source_engine_name, schema_name=source_schema_name, table_name=source_table_name, uid_set=random_key_set, return_as_dict=True)
+        target_row_set_dict = self.get_rows_by_uid_set(engine_name=target_engine_name, schema_name=target_schema_name, table_name=target_table_name, uid_set=random_key_set, return_as_dict=True)
 
         # Get unique set of tuples
         unique_tuples  = list(set(source_row_set_dict.keys()).union(set(target_row_set_dict.keys())))
