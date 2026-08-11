@@ -1,7 +1,7 @@
 import ssl
 import unittest
 
-from graphdb.infrastructure.shared.ssl_options import (
+from graphdb.common.cmn_ssl_options import (
     build_ssl_connect_args,
     build_ssl_cli_flags,
     normalize_ssl_options,

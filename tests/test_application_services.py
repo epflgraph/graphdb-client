@@ -1,10 +1,10 @@
 import unittest
 
-from graphdb.application.compare_service import CompareService
-from graphdb.application.connectivity_service import ConnectivityService
-from graphdb.application.export_service import ExportService
-from graphdb.application.import_service import ImportService
-from graphdb.application.copy_service import CopyService
+from graphdb.application.operations.ops_compare import CompareOperations
+from graphdb.application.operations.ops_connectivity import ConnectivityOperations
+from graphdb.application.operations.ops_export import ExportOperations
+from graphdb.application.operations.ops_import import ImportOperations
+from graphdb.application.operations.ops_copy import CopyOperations
 from tests.fakes import (
     FakeAdapterRegistry,
     FakeDatabaseAdapter,
@@ -15,20 +15,20 @@ from tests.fakes import (
 )
 
 
-class TestConnectivityService(unittest.TestCase):
+class TestConnectivityOperations(unittest.TestCase):
     def test_test_all_reports_status_per_environment(self):
         registry = FakeAdapterRegistry({
             "up": FakeEnvironmentAdapter(database=FakeDatabaseAdapter()),
             "down": FakeEnvironmentAdapter(database=FakeDatabaseAdapter()),
         })
         registry.get("down").db.connected = False
-        service = ConnectivityService(registry)
+        service = ConnectivityOperations(registry)
         result = service.test_all()
         self.assertTrue(result["up"])
         self.assertFalse(result["down"])
 
 
-class TestExportService(unittest.TestCase):
+class TestExportOperations(unittest.TestCase):
     def test_export_create_table_writes_normalized_files(self):
         schema = FakeSchemaAdapter(
             tables={"mydb": ["users"]},
@@ -40,7 +40,7 @@ class TestExportService(unittest.TestCase):
         registry = FakeAdapterRegistry({
             "env": FakeEnvironmentAdapter(schema=schema, filesystem=fs),
         })
-        service = ExportService(registry)
+        service = ExportOperations(registry)
         service.export_create_table("env", "mydb", "users", "/tmp/export")
 
         paths = list(fs.files.keys())
@@ -53,19 +53,19 @@ class TestExportService(unittest.TestCase):
         registry = FakeAdapterRegistry({
             "env": FakeEnvironmentAdapter(schema=schema, dump=dump, filesystem=fs),
         })
-        service = ExportService(registry)
+        service = ExportOperations(registry)
         service.export_database("env", "mydb", "/tmp/export", include_create_tables=False)
         self.assertEqual(len(dump.dumps), 2)
 
 
-class TestCompareService(unittest.TestCase):
+class TestCompareOperations(unittest.TestCase):
     def test_compare_tables_reports_error_when_table_missing(self):
         schema = FakeSchemaAdapter(tables={"src": ["users"], "dst": []})
         registry = FakeAdapterRegistry({
             "src": FakeEnvironmentAdapter(schema=schema),
             "dst": FakeEnvironmentAdapter(schema=schema),
         })
-        service = CompareService(registry)
+        service = CompareOperations(registry)
         result = service.compare_tables("src", "src", "dst", "dst", "missing")
         self.assertIn("error", result)
 
@@ -81,7 +81,7 @@ class TestCompareService(unittest.TestCase):
             "src": FakeEnvironmentAdapter(database=db, schema=schema),
             "dst": FakeEnvironmentAdapter(database=db, schema=schema),
         })
-        service = CompareService(registry)
+        service = CompareOperations(registry)
         result = service.compare_tables("src", "src", "dst", "dst", "users")
         self.assertNotIn("error", result)
         statuses = {r["metric"]: r["status"] for r in result["rows"]}

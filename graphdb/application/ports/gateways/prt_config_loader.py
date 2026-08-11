@@ -2,7 +2,7 @@ from __future__ import annotations
 
 from pathlib import Path
 from typing import Any, Dict, Protocol
-from graphdb.domain.config import GraphDBConfig
+from graphdb.domain.mdl_config import GraphDBConfig
 
 
 class ConfigLoaderPort(Protocol):

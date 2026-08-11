@@ -60,7 +60,7 @@ def run_cmd(cmd: list[str], env: Dict[str, str] | None = None, check: bool = Tru
 
 
 def run_graphdb(args: list[str], config_path: Path, env: Dict[str, str] | None = None) -> None:
-    cmd = [sys.executable, "-m", "graphdb.cli.main"] + args
+    cmd = [sys.executable, "-m", "graphdb.entrypoints.cli.cli_main"] + args
     merged_env = os.environ.copy()
     merged_env["GRAPHDB_CONFIG"] = str(config_path)
     if env:

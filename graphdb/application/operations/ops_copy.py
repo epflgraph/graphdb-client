@@ -6,6 +6,7 @@ from loguru import logger as sysmsg
 
 from graphdb.application.operations.ops_export import ExportOperations
 from graphdb.application.operations.ops_import import ImportOperations
+from graphdb.application.ports.gateways.prt_adapter_registry import AdapterRegistryPort
 
 
 class CopyOperations:
@@ -13,9 +14,15 @@ class CopyOperations:
 
     def __init__(
         self,
-        export_ops: ExportOperations,
-        import_ops: ImportOperations,
+        export_ops: ExportOperations | None = None,
+        import_ops: ImportOperations | None = None,
+        registry: AdapterRegistryPort | None = None,
     ) -> None:
+        if export_ops is None or import_ops is None:
+            if registry is None:
+                raise ValueError("CopyOperations requires either (export_ops, import_ops) or registry")
+            export_ops = export_ops or ExportOperations(registry)
+            import_ops = import_ops or ImportOperations(registry)
         self.export_ops = export_ops
         self.import_ops = import_ops
 
@@ -35,19 +42,19 @@ class CopyOperations:
 
         with tempfile.TemporaryDirectory() as tmpdir:
             self.export_ops.export_table(
-                source_env=source_env,
-                source_schema=source_schema,
+                env_name=source_env,
+                schema_name=source_schema,
                 table_name=table_name,
-                output_dir=tmpdir,
+                output_folder=tmpdir,
                 filter_by=filter_by,
                 chunk_size=chunk_size,
                 include_create_tables=True,
                 compress=compress,
             )
             self.import_ops.import_table(
-                target_env=target_env,
-                target_schema=target_schema,
-                dump_path=str(Path(tmpdir) / source_schema / table_name),
+                env_name=target_env,
+                schema_name=target_schema,
+                input_folder=str(Path(tmpdir) / source_schema / table_name),
                 create_keys_after_import=create_keys_after_import,
                 compress=compress,
             )
@@ -67,18 +74,18 @@ class CopyOperations:
 
         with tempfile.TemporaryDirectory() as tmpdir:
             self.export_ops.export_database(
-                source_env=source_env,
-                source_schema=source_schema,
-                output_dir=tmpdir,
+                env_name=source_env,
+                schema_name=source_schema,
+                output_folder=tmpdir,
                 filter_by=filter_by,
                 chunk_size=chunk_size,
                 include_create_tables=True,
                 compress=compress,
             )
             self.import_ops.import_database(
-                target_env=target_env,
-                target_schema=target_schema,
-                dump_path=str(Path(tmpdir) / source_schema),
+                env_name=target_env,
+                schema_name=target_schema,
+                input_folder=str(Path(tmpdir) / source_schema),
                 create_keys_after_import=create_keys_after_import,
                 compress=compress,
             )

@@ -2,12 +2,7 @@ from __future__ import annotations
 
 from typing import Any, List, Protocol, Tuple
 
-
-class FilesystemPort(Protocol):
-    """Abstract contract for simple filesystem writes."""
-
-    def write_text(self, path: Any, content: str) -> None:
-        ...
+from graphdb.application.ports.gateways.prt_filesystem import FilesystemPort
 
 
 class ExportDumpPort(Protocol):

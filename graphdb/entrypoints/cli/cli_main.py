@@ -7,10 +7,11 @@ from typing import Optional
 
 import typer
 
-from graphdb.application.adapter_registry import AdapterRegistry
-from graphdb.application.config_service import ConfigService
-from graphdb.cli.context import CLIContext
-from graphdb.cli.commands import (
+from graphdb.application.factories.fct_adapter_registry import AdapterRegistry
+from graphdb.application.operations.ops_config import ConfigOperations
+from graphdb.domain.mdl_config import GraphDBConfig
+from graphdb.entrypoints.cli.cli_context import CLIContext
+from graphdb.entrypoints.cli import (
     cmd_config,
     cmd_compare,
     cmd_copy,
@@ -37,7 +38,7 @@ class _LazyAppState:
     @property
     def registry(self) -> AdapterRegistry:
         if self._registry is None:
-            config = ConfigService.from_default_file().config
+            config = GraphDBConfig.from_default_file()
             self._registry = AdapterRegistry(config)
         return self._registry
 
@@ -57,7 +58,7 @@ def _cli_context(ctx: typer.Context) -> CLIContext:
 # -----------------------------------------------------------------------------
 def _load_env_settings() -> tuple[list[str], str, str]:
     try:
-        cfg = ConfigService.from_default_file().config
+        cfg = GraphDBConfig.from_default_file()
         envs = list(cfg.env_names())
         default_env = cfg.default_env
         second_env = envs[1] if len(envs) > 1 else default_env
@@ -269,8 +270,6 @@ def _cmd_compare(
     table_name: Optional[str] = typer.Option(None, "--table_name", help="Name of the table to compare (if comparing only one table)."),
     row_count_tolerance: float = typer.Option(0.10, "--row_count_tolerance", help="Relative row-count difference below which a mismatch is reported as a warning instead of an error (default: 0.10 for 10%)."),
     ignore_warnings: bool = typer.Option(False, "--ignore_warnings", "-iw", help="Skip output for tables that have only warnings and no errors."),
-    random_sampling: bool = typer.Option(False, "--random-sampling", "-rs", help="Compare table rows by random sampling using the legacy GraphDB implementation (requires --table_name)."),
-    sample_size: int = typer.Option(1024, "--sample-size", "-N", help="Number of rows to sample when using --random-sampling (default: 1024)."),
 ) -> None:
     cmd_compare(
         argparse.Namespace(
@@ -282,8 +281,6 @@ def _cmd_compare(
             table_name=table_name,
             row_count_tolerance=row_count_tolerance,
             ignore_warnings=ignore_warnings,
-            random_sampling=random_sampling,
-            sample_size=sample_size,
         )
     )
 
@@ -291,3 +288,7 @@ def _cmd_compare(
 def main(argv: Optional[list[str]] = None) -> int:
     app(args=argv)
     return 0
+
+
+if __name__ == "__main__":
+    raise SystemExit(main())

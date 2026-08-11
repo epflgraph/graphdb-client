@@ -3,14 +3,14 @@ import unittest
 from pathlib import Path
 from unittest.mock import patch
 
-from graphdb.application.config_service import ConfigService
-from graphdb.cli.commands.config import cmd_config
-from graphdb.cli.commands.compare import cmd_compare, _print_table_result
-from graphdb.cli.commands.copy import cmd_copy
-from graphdb.cli.commands.export import cmd_export
-from graphdb.cli.commands.import_ import cmd_import
-from graphdb.cli.commands.test import cmd_test
-from graphdb.domain.config import GraphDBConfig
+from graphdb.application.operations.ops_config import ConfigOperations
+from graphdb.domain.mdl_config import GraphDBConfig
+from graphdb.entrypoints.cli.cmd_config import cmd_config
+from graphdb.entrypoints.cli.cmd_compare import cmd_compare, _print_table_result
+from graphdb.entrypoints.cli.cmd_copy import cmd_copy
+from graphdb.entrypoints.cli.cmd_export import cmd_export
+from graphdb.entrypoints.cli.cmd_import import cmd_import
+from graphdb.entrypoints.cli.cmd_test import cmd_test
 from tests.fakes import (
     FakeAdapterRegistry,
     FakeDatabaseAdapter,
@@ -26,11 +26,11 @@ def _make_args(**kwargs):
 
 
 class TestCliConfigCommand(unittest.TestCase):
-    @patch("graphdb.domain.config.GraphDBConfig.default_path")
-    @patch("graphdb.cli.commands.config.ConfigService.from_default_file")
+    @patch("graphdb.domain.mdl_config.GraphDBConfig.default_path")
+    @patch("graphdb.entrypoints.cli.cmd_config.GraphDBConfig.from_default_file")
     @patch("rich.print_json")
     def test_config_command_redacts_passwords(self, mock_print_json, mock_from_default, mock_default_path):
-        from graphdb.domain.config import GraphDBConfig
+        from graphdb.domain.mdl_config import GraphDBConfig
         import tempfile, os
         cfg = GraphDBConfig.from_dict({
             "client_bin": "mysql",
@@ -40,7 +40,7 @@ class TestCliConfigCommand(unittest.TestCase):
                 "test": {"host_address": "127.0.0.1", "port": 3306, "username": "u", "password": "secret"},
             },
         })
-        service = ConfigService(cfg)
+        service = ConfigOperations(cfg)
         with tempfile.NamedTemporaryFile(mode="w", suffix=".yaml", delete=False) as fh:
             fh.write(
                 "client_bin: mysql\n"
@@ -56,7 +56,7 @@ class TestCliConfigCommand(unittest.TestCase):
             path = Path(fh.name)
         try:
             mock_default_path.return_value = path
-            mock_from_default.return_value = service
+            mock_from_default.return_value = cfg
             args = _make_args(ctx=None)
             cmd_config(args)
             data = mock_print_json.call_args.kwargs["data"]
@@ -151,80 +151,6 @@ class TestCliCopyCommand(unittest.TestCase):
 
 
 class TestCliCompareCommand(unittest.TestCase):
-    @patch("graphdb.application.compare_service.GraphDB")
-    def test_compare_command_random_sampling_without_table_iterates_common_tables(self, mock_graphdb_cls):
-        db = FakeDatabaseAdapter(responses={})
-        schema = FakeSchemaAdapter(tables={"src": ["users", "posts"], "dst": ["users", "comments"]})
-        config = GraphDBConfig.from_dict({
-            "client_bin": "mysql",
-            "dump_bin": "mysqldump",
-            "default_env": "src",
-            "environments": {
-                "src": {"host_address": "127.0.0.1", "port": 3306, "username": "u", "password": "p"},
-                "dst": {"host_address": "127.0.0.1", "port": 3307, "username": "u", "password": "p"},
-            },
-        })
-        registry = FakeAdapterRegistry({
-            "src": FakeEnvironmentAdapter(database=db, schema=schema),
-            "dst": FakeEnvironmentAdapter(database=db, schema=schema),
-        }, config=config)
-        args = _make_args(
-            ctx=_make_args(registry=registry),
-            from_env="src",
-            from_schema="src",
-            to_env="dst",
-            to_schema="dst",
-            table_name=None,
-            row_count_tolerance=0.10,
-            ignore_warnings=False,
-            random_sampling=True,
-            sample_size=512,
-        )
-        with patch("builtins.print"):
-            cmd_compare(args)
-        mock_graphdb_cls.assert_called_once()
-        sampled_tables = {
-            call.kwargs.get("source_table_name")
-            for call in mock_graphdb_cls.return_value.compare_tables_by_random_sampling.call_args_list
-        }
-        self.assertEqual(sampled_tables, {"users"})
-
-    @patch("graphdb.application.compare_service.GraphDB")
-    def test_compare_command_uses_random_sampling(self, mock_graphdb_cls):
-        db = FakeDatabaseAdapter(responses={})
-        schema = FakeSchemaAdapter(tables={"src": ["users"], "dst": ["users"]})
-        config = GraphDBConfig.from_dict({
-            "client_bin": "mysql",
-            "dump_bin": "mysqldump",
-            "default_env": "src",
-            "environments": {
-                "src": {"host_address": "127.0.0.1", "port": 3306, "username": "u", "password": "p"},
-                "dst": {"host_address": "127.0.0.1", "port": 3307, "username": "u", "password": "p"},
-            },
-        })
-        registry = FakeAdapterRegistry({
-            "src": FakeEnvironmentAdapter(database=db, schema=schema),
-            "dst": FakeEnvironmentAdapter(database=db, schema=schema),
-        }, config=config)
-        args = _make_args(
-            ctx=_make_args(registry=registry),
-            from_env="src",
-            from_schema="src",
-            to_env="dst",
-            to_schema="dst",
-            table_name="users",
-            row_count_tolerance=0.10,
-            ignore_warnings=False,
-            random_sampling=True,
-            sample_size=2048,
-        )
-        with patch("builtins.print"):
-            cmd_compare(args)
-        mock_graphdb_cls.assert_called_once()
-        mock_graphdb_cls.return_value.compare_tables_by_random_sampling.assert_called_once()
-        call_kwargs = mock_graphdb_cls.return_value.compare_tables_by_random_sampling.call_args.kwargs
-        self.assertEqual(call_kwargs.get("sample_size"), 2048)
-
     def test_compare_command_prints_table_result(self):
         db = FakeDatabaseAdapter(responses={
             ("SELECT COUNT(*) FROM `src`.`users`", "src"): [[100]],
@@ -244,8 +170,6 @@ class TestCliCompareCommand(unittest.TestCase):
             table_name="users",
             row_count_tolerance=0.10,
             ignore_warnings=False,
-            random_sampling=False,
-            sample_size=1024,
         )
         with patch("builtins.print"):
             cmd_compare(args)

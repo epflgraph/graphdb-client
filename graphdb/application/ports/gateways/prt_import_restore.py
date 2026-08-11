@@ -3,27 +3,13 @@ from __future__ import annotations
 from pathlib import Path
 from typing import Any, List, Protocol
 
-
-class FilesystemImportPort(Protocol):
-    """Abstract contract for reading, writing, and scanning filesystem artifacts."""
-
-    def read_text(self, path: Any) -> str:
-        ...
-
-    def write_text(self, path: Any, content: str) -> None:
-        ...
-
-    def exists(self, path: Any) -> bool:
-        ...
-
-    def list_sql_files(self, folder: Any, compress: bool = False) -> List[Path]:
-        ...
+from graphdb.application.ports.gateways.prt_filesystem import FilesystemPort
 
 
 class ImportRestorePort(Protocol):
     """Abstract contract for executing database schema/data restorations from dump files."""
 
-    filesystem: FilesystemImportPort
+    filesystem: FilesystemPort
 
     def database_exists(self, schema_name: str) -> bool:
         ...

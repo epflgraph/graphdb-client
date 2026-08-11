@@ -4,10 +4,8 @@ import glob
 from pathlib import Path
 from typing import List
 
-from graphdb.domain.ports.filesystem_port import FilesystemPort
 
-
-class LocalFilesystem:
+class FilesystemGateway:
     """Adapter for local filesystem operations."""
 
     def write_text(self, path: Path, content: str) -> None:

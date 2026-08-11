@@ -23,7 +23,7 @@ dependencies = [
 ]
 
 [project.scripts]
-graphdb = "graphdb.cli.main:main"
+graphdb = "graphdb.entrypoints.cli.cli_main:main"
 
 [tool.setuptools.packages.find]
 include = ["graphdb*"]

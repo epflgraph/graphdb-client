@@ -1,14 +1,14 @@
 from __future__ import annotations
 from typing import Any, Dict, List
-from graphdb.application.adapter_registry import AdapterRegistry
+
 from graphdb.application.policies.pol_table_comparison import TableComparisonPolicy
-from graphdb.application.ports.gateways.prt_table_metadata import TableMetadataPort
-from graphdb.core.graphdb import GraphDB
+from graphdb.application.ports.gateways.prt_adapter_registry import AdapterRegistryPort, EnvironmentPort
+
 
 class CompareOperations:
     """Use case orchestrator for table and database metadata comparison."""
 
-    def __init__(self, registry: AdapterRegistry) -> None:
+    def __init__(self, registry: AdapterRegistryPort) -> None:
         self.registry = registry
         self.policy = TableComparisonPolicy()
 
@@ -22,8 +22,8 @@ class CompareOperations:
         row_count_tolerance: float = 0.10,
         ignore_warnings: bool = False,
     ) -> Dict[str, Any]:
-        source_meta: TableMetadataPort = self.registry.get(source_env)
-        target_meta: TableMetadataPort = self.registry.get(target_env)
+        source_meta: EnvironmentPort = self.registry.get(source_env)
+        target_meta: EnvironmentPort = self.registry.get(target_env)
 
         if not source_meta.table_exists(source_schema, table_name):
             return {"error": f"Table {source_schema}.{table_name} does not exist in '{source_env}'"}
@@ -69,8 +69,8 @@ class CompareOperations:
         row_count_tolerance: float = 0.10,
         ignore_warnings: bool = False,
     ) -> List[Dict[str, Any]]:
-        source_meta: TableMetadataPort = self.registry.get(source_env)
-        target_meta: TableMetadataPort = self.registry.get(target_env)
+        source_meta: EnvironmentPort = self.registry.get(source_env)
+        target_meta: EnvironmentPort = self.registry.get(target_env)
 
         source_tables = set(source_meta.get_tables(source_schema))
         target_tables = set(target_meta.get_tables(target_schema))
@@ -83,35 +83,6 @@ class CompareOperations:
             )
             for tbl in all_tables
         ]
-
-    def compare_tables_by_random_sampling(
-        self,
-        source_env: str,
-        source_schema: str,
-        target_env: str,
-        target_schema: str,
-        table_name: str,
-        sample_size: int = 1024,
-    ) -> Dict[str, Any]:
-        source_meta: TableMetadataPort = self.registry.get(source_env)
-        target_meta: TableMetadataPort = self.registry.get(target_env)
-
-        if not source_meta.table_exists(source_schema, table_name):
-            return {"error": f"Table {source_schema}.{table_name} does not exist in '{source_env}'"}
-        if not target_meta.table_exists(target_schema, table_name):
-            return {"error": f"Table {target_schema}.{table_name} does not exist in '{target_env}'"}
-
-        graphdb = GraphDB(config=self.registry.config)
-        graphdb.compare_tables_by_random_sampling(
-            source_engine_name=source_env,
-            source_schema_name=source_schema,
-            source_table_name=table_name,
-            target_engine_name=target_env,
-            target_schema_name=target_schema,
-            target_table_name=table_name,
-            sample_size=sample_size,
-        )
-        return {"ok": True}
 
     @staticmethod
     def _extract_metrics(source_row: Dict[str, Any], target_row: Dict[str, Any]):

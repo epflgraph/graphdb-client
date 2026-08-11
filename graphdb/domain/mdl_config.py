@@ -8,7 +8,7 @@ from typing import Any, Dict, Optional
 
 from yaml import safe_load
 
-from graphdb.domain.exceptions import GraphDBError
+from graphdb.domain.err_exceptions import GraphDBError
 
 
 class GraphDBConfigError(GraphDBError, ValueError):
@@ -137,6 +137,9 @@ class EnvironmentConfig:
             "sqlalchemy_dialect": self.sqlalchemy_dialect,
             "sqlalchemy_driver": self.sqlalchemy_driver,
         }
+
+    def to_dict(self) -> Dict[str, Any]:
+        return self.as_dict()
 
 
 @dataclass(frozen=True)
@@ -284,3 +287,17 @@ class GraphDBConfig:
         raise GraphDBConfigError(
             "Missing config path for exports. Set either 'export_path' or 'data_path.export' in config.yaml"
         )
+
+    def to_dict(self) -> Dict[str, Any]:
+        return {
+            "client_bin": self.client_bin,
+            "dump_bin": self.dump_bin,
+            "environments": {
+                name: env.to_dict() for name, env in self.environments.items()
+            },
+            "default_env": self.default_env,
+            "schema_cache": self.schema_cache,
+            "schema_test": self.schema_test,
+            "export_path": self.export_path,
+            "data_path": self.data_path,
+        }

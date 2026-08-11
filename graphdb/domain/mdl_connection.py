@@ -4,7 +4,7 @@ from dataclasses import dataclass
 from typing import TYPE_CHECKING, Any, Dict, Optional
 
 if TYPE_CHECKING:
-    from graphdb.domain.config import EnvironmentConfig
+    from graphdb.domain.mdl_config import EnvironmentConfig
 
 
 @dataclass(frozen=True)
@@ -30,7 +30,7 @@ class ConnectionParams:
         env_config: EnvironmentConfig,
         defaults: Dict[str, Any],
     ) -> ConnectionParams:
-        from graphdb.domain.config import EnvironmentConfig
+        from graphdb.domain.mdl_config import EnvironmentConfig
 
         if isinstance(env_config, EnvironmentConfig):
             return cls(

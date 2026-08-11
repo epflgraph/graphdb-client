@@ -5,8 +5,7 @@ from typing import List, Optional
 from sqlalchemy import text
 from sqlalchemy.engine import Engine
 
-from graphdb.domain.errors import SchemaError
-from graphdb.domain.ports.schema_port import SchemaPort
+from graphdb.domain.err_exceptions import SchemaError
 
 
 def _q(name: str) -> str:

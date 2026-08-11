@@ -80,6 +80,25 @@ class FakeSchemaAdapter:
     def table_exists(self, schema_name: str, table_name: str, exclude_views: bool = False) -> bool:
         return table_name in self.tables.get(schema_name, [])
 
+    def fetch_table_metadata(self, schema_name: str, table_name: str) -> Dict[str, Any]:
+        return {
+            "table_schema": schema_name,
+            "table_name": table_name,
+            "engine": "InnoDB",
+            "table_collation": "utf8mb4_unicode_ci",
+            "row_format": "Dynamic",
+            "table_rows": 0,
+            "data_length": 0,
+            "index_length": 0,
+            "total_bytes": 0,
+            "column_count": 0,
+            "nullable_columns": 0,
+            "columns_with_default": 0,
+            "index_count": 0,
+            "unique_index_count": 0,
+            "avg_row_length": 0,
+        }
+
     def column_exists(self, schema_name: str, table_name: str, column_name: str) -> bool:
         return column_name in self.columns.get(f"{schema_name}.{table_name}", [])
 
@@ -187,6 +206,13 @@ class FakeEnvironmentAdapter:
 
     def table_exists(self, *args, **kwargs):
         return self.schema.table_exists(*args, **kwargs)
+
+    def fetch_table_metadata(self, *args, **kwargs):
+        return self.schema.fetch_table_metadata(*args, **kwargs)
+
+    def get_exact_count(self, schema_name: str, table_name: str) -> int:
+        rows = self.execute(f"SELECT COUNT(*) FROM `{schema_name}`.`{table_name}`", schema_name=schema_name)
+        return int(rows[0][0]) if rows else 0
 
     def column_exists(self, *args, **kwargs):
         return self.schema.column_exists(*args, **kwargs)

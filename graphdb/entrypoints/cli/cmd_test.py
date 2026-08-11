@@ -1,12 +1,12 @@
 # graphdb/cli/commands/test.py
-from graphdb.application.connectivity_service import ConnectivityService
-from graphdb.cli.context import CLIContext
+from graphdb.application.operations.ops_connectivity import ConnectivityOperations
+from graphdb.entrypoints.cli.cli_context import CLIContext
 
 
 def cmd_test(args):
     print("🖥️  ~ GraphDB client CLI. Test server connectivity.")
 
-    service = ConnectivityService(args.ctx.registry)
+    service = ConnectivityOperations(args.ctx.registry)
 
     if args.env:
         if service.test_one(args.env):

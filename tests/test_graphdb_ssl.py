@@ -1,12 +1,12 @@
 import ssl
 import unittest
 
-from graphdb.core.graphdb import GraphDB
+from graphdb.common.cmn_ssl_options import build_ssl_connect_args, build_ssl_cli_flags
 
 
 class TestGraphDBSSLHelpers(unittest.TestCase):
     def test_build_ssl_connect_args_disables_verification(self):
-        opts = GraphDB._build_ssl_connect_args({
+        opts = build_ssl_connect_args({
             "ssl_ca": "/tmp/ca.pem",
             "verify_server_cert": False,
         })
@@ -15,7 +15,7 @@ class TestGraphDBSSLHelpers(unittest.TestCase):
         self.assertFalse(opts["check_hostname"])
 
     def test_build_ssl_connect_args_enforces_required_with_ca(self):
-        opts = GraphDB._build_ssl_connect_args({
+        opts = build_ssl_connect_args({
             "cert": "/tmp/client.pem",
         })
         self.assertEqual(opts["cert"], "/tmp/client.pem")
@@ -23,7 +23,7 @@ class TestGraphDBSSLHelpers(unittest.TestCase):
         self.assertTrue(opts["check_hostname"])
 
     def test_build_ssl_connect_args_parses_string_verification_flags(self):
-        opts = GraphDB._build_ssl_connect_args({
+        opts = build_ssl_connect_args({
             "ca": "/tmp/ca.pem",
             "ssl_verify_server_cert": "false",
         })
@@ -31,7 +31,7 @@ class TestGraphDBSSLHelpers(unittest.TestCase):
         self.assertFalse(opts["check_hostname"])
 
     def test_build_ssl_cli_flags_uses_ssl_mode_when_supported(self):
-        flags = GraphDB._build_ssl_cli_flags(
+        flags = build_ssl_cli_flags(
             {"mode": "VERIFY_CA", "ca": "/tmp/ca.pem"},
             supported_options={"ssl-mode", "ssl-ca"},
         )
@@ -40,11 +40,11 @@ class TestGraphDBSSLHelpers(unittest.TestCase):
         self.assertNotIn("--ssl", flags)
 
     def test_build_ssl_cli_flags_uses_legacy_verify_toggles_when_supported(self):
-        true_flags = GraphDB._build_ssl_cli_flags(
+        true_flags = build_ssl_cli_flags(
             {"verify_server_cert": True},
             supported_options={"ssl", "ssl-verify-server-cert", "skip-ssl-verify-server-cert"},
         )
-        false_flags = GraphDB._build_ssl_cli_flags(
+        false_flags = build_ssl_cli_flags(
             {"verify_server_cert": False},
             supported_options={"ssl", "ssl-verify-server-cert", "skip-ssl-verify-server-cert"},
         )

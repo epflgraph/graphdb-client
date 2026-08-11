@@ -5,15 +5,15 @@ import shlex
 import signal
 import subprocess
 from pathlib import Path
-from typing import Dict, List, Optional
+from typing import Optional
 
-from graphdb.domain.connection import ConnectionParams
-from graphdb.domain.errors import QueryExecutionError
-from graphdb.infrastructure.mysql_cli.command_builder import build_mysql_base_command
+from graphdb.common.cmn_command_builder import build_mysql_base_command
+from graphdb.domain.err_exceptions import QueryExecutionError
+from graphdb.domain.mdl_connection import ConnectionParams
 
 
-class MySQLClient:
-    """Adapter for running SQL through the native mysql CLI."""
+class BaseDBClientGateway:
+    """Shared implementation for MySQL/MariaDB binary and Docker shell clients."""
 
     def __init__(self, params: ConnectionParams, env_name: str = "default") -> None:
         self.params = params

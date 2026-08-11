@@ -5,9 +5,9 @@ import subprocess
 from pathlib import Path
 from typing import Optional
 
-from graphdb.domain.connection import ConnectionParams
-from graphdb.domain.errors import ExportError
-from graphdb.infrastructure.mysql_cli.command_builder import build_mysqldump_base_command
+from graphdb.common.cmn_command_builder import build_mysqldump_base_command
+from graphdb.domain.err_exceptions import ExportError
+from graphdb.domain.mdl_connection import ConnectionParams
 
 
 def _clean_dump_stderr(stderr_text: Optional[str]) -> str:
@@ -16,7 +16,7 @@ def _clean_dump_stderr(stderr_text: Optional[str]) -> str:
     return "\n".join(lines).strip()
 
 
-class MySQLDumpClient:
+class MySQLDumpBinaryGateway:
     """Adapter for bulk data export using mysqldump."""
 
     def __init__(self, params: ConnectionParams, env_name: str = "default") -> None:
