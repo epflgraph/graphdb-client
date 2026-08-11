@@ -1,7 +1,7 @@
 from graphdb.application.operations.ops_copy import CopyOperations
 from graphdb.application.operations.ops_export import ExportOperations
 from graphdb.application.operations.ops_import import ImportOperations
-from graphdb.application.factories.fct_adapter_registry import AdapterRegistry
+from graphdb.application.factories.fct_adapter_registry import Environments
 from graphdb.domain.mdl_config import GraphDBConfig
 
 
@@ -10,7 +10,7 @@ class Container:
 
     def __init__(self, config: GraphDBConfig) -> None:
         self.config = config
-        self.registry = AdapterRegistry(config)
+        self.registry = Environments(config)
 
         # Base operations
         self.export_ops = ExportOperations(registry=self.registry)

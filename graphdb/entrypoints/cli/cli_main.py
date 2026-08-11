@@ -7,7 +7,7 @@ from typing import Optional
 
 import typer
 
-from graphdb.application.factories.fct_adapter_registry import AdapterRegistry
+from graphdb.application.factories.fct_adapter_registry import Environments
 from graphdb.application.operations.ops_config import ConfigOperations
 from graphdb.domain.mdl_config import GraphDBConfig
 from graphdb.entrypoints.cli.cli_context import CLIContext
@@ -33,13 +33,13 @@ class _LazyAppState:
     """Container for lazily-initialized CLI dependencies."""
 
     def __init__(self) -> None:
-        self._registry: Optional[AdapterRegistry] = None
+        self._registry: Optional[Environments] = None
 
     @property
-    def registry(self) -> AdapterRegistry:
+    def registry(self) -> Environments:
         if self._registry is None:
             config = GraphDBConfig.from_default_file()
-            self._registry = AdapterRegistry(config)
+            self._registry = Environments(config)
         return self._registry
 
 

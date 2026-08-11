@@ -4,9 +4,9 @@ from pathlib import Path
 from loguru import logger as sysmsg
 from tqdm import tqdm
 
-from graphdb.application.policies.pol_ddl_export import DDLExportPolicy
-from graphdb.application.ports.gateways.prt_adapter_registry import AdapterRegistryPort
-from graphdb.application.ports.gateways.prt_export_dump import ExportDumpPort
+from graphdb.application.policies.pol_ddl import DDLExportPolicy
+from graphdb.adapters.environments import Environments
+from graphdb.adapters.gateways.gtw_environment import EnvironmentGateway
 
 PBWIDTH = 64
 
@@ -14,7 +14,7 @@ PBWIDTH = 64
 class ExportOperations:
     """Use case orchestrator for exporting schemas and data to the filesystem."""
 
-    def __init__(self, registry: AdapterRegistryPort) -> None:
+    def __init__(self, registry: Environments) -> None:
         self.registry = registry
         self.ddl_policy = DDLExportPolicy()
 
@@ -25,7 +25,7 @@ class ExportOperations:
         table_name: str,
         output_folder: str,
     ) -> None:
-        adapter: ExportDumpPort = self.registry.get(env_name)
+        adapter: EnvironmentGateway = self.registry.get(env_name)
         table_folder = Path(output_folder) / schema_name / table_name
         table_folder.mkdir(parents=True, exist_ok=True)
 
@@ -47,7 +47,7 @@ class ExportOperations:
         chunk_size: int = 1_000_000,
         compress: bool = False,
     ) -> None:
-        adapter: ExportDumpPort = self.registry.get(env_name)
+        adapter: EnvironmentGateway = self.registry.get(env_name)
         table_folder = Path(output_folder) / schema_name / table_name
         table_folder.mkdir(parents=True, exist_ok=True)
 
@@ -136,7 +136,7 @@ class ExportOperations:
         include_create_tables: bool = False,
         compress: bool = False,
     ) -> None:
-        adapter: ExportDumpPort = self.registry.get(env_name)
+        adapter: EnvironmentGateway = self.registry.get(env_name)
         for table_name in sorted(adapter.get_tables(schema_name)):
             self.export_table(
                 env_name,

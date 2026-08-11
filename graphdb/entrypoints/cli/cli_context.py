@@ -4,9 +4,9 @@ from dataclasses import dataclass
 from typing import TYPE_CHECKING
 
 if TYPE_CHECKING:
-    from graphdb.application.factories.fct_adapter_registry import AdapterRegistry
+    from graphdb.application.factories.fct_adapter_registry import Environments
 
 
 @dataclass
 class CLIContext:
-    registry: "AdapterRegistry"
+    registry: "Environments"

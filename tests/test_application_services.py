@@ -6,7 +6,7 @@ from graphdb.application.operations.ops_export import ExportOperations
 from graphdb.application.operations.ops_import import ImportOperations
 from graphdb.application.operations.ops_copy import CopyOperations
 from tests.fakes import (
-    FakeAdapterRegistry,
+    FakeEnvironments,
     FakeDatabaseAdapter,
     FakeDumpAdapter,
     FakeEnvironmentAdapter,
@@ -17,7 +17,7 @@ from tests.fakes import (
 
 class TestConnectivityOperations(unittest.TestCase):
     def test_test_all_reports_status_per_environment(self):
-        registry = FakeAdapterRegistry({
+        registry = FakeEnvironments({
             "up": FakeEnvironmentAdapter(database=FakeDatabaseAdapter()),
             "down": FakeEnvironmentAdapter(database=FakeDatabaseAdapter()),
         })
@@ -37,7 +37,7 @@ class TestExportOperations(unittest.TestCase):
             },
         )
         fs = FakeFilesystemAdapter()
-        registry = FakeAdapterRegistry({
+        registry = FakeEnvironments({
             "env": FakeEnvironmentAdapter(schema=schema, filesystem=fs),
         })
         service = ExportOperations(registry)
@@ -50,7 +50,7 @@ class TestExportOperations(unittest.TestCase):
         schema = FakeSchemaAdapter(tables={"mydb": ["users", "posts"]})
         dump = FakeDumpAdapter()
         fs = FakeFilesystemAdapter()
-        registry = FakeAdapterRegistry({
+        registry = FakeEnvironments({
             "env": FakeEnvironmentAdapter(schema=schema, dump=dump, filesystem=fs),
         })
         service = ExportOperations(registry)
@@ -61,7 +61,7 @@ class TestExportOperations(unittest.TestCase):
 class TestCompareOperations(unittest.TestCase):
     def test_compare_tables_reports_error_when_table_missing(self):
         schema = FakeSchemaAdapter(tables={"src": ["users"], "dst": []})
-        registry = FakeAdapterRegistry({
+        registry = FakeEnvironments({
             "src": FakeEnvironmentAdapter(schema=schema),
             "dst": FakeEnvironmentAdapter(schema=schema),
         })
@@ -77,7 +77,7 @@ class TestCompareOperations(unittest.TestCase):
         schema = FakeSchemaAdapter(
             tables={"src": ["users"], "dst": ["users"]},
         )
-        registry = FakeAdapterRegistry({
+        registry = FakeEnvironments({
             "src": FakeEnvironmentAdapter(database=db, schema=schema),
             "dst": FakeEnvironmentAdapter(database=db, schema=schema),
         })

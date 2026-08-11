@@ -16,7 +16,7 @@ from graphdb.utils.mdl_sqlquery import print_sql
 from graphdb.utils.cmn_table import get_table_type_from_name
 
 # New architecture imports (incremental migration)
-from graphdb.application.factories.fct_adapter_registry import AdapterRegistry
+from graphdb.application.factories.fct_adapter_registry import Environments
 from graphdb.domain.mdl_connection import ConnectionParams
 from graphdb.adapters.gateways.utils import (
     normalize_ssl_options,
@@ -87,7 +87,7 @@ class GraphDB():
         self.default_engine_name = self.config.default_env
 
         # Build new architecture adapters; mirror their state for backward compatibility.
-        self._adapter_registry = AdapterRegistry(self.config)
+        self._adapter_registry = Environments(self.config)
 
         self.params = {}
         self.engine = {}

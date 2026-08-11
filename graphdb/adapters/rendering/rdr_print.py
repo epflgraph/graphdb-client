@@ -42,7 +42,7 @@ def print_colour(msg, colour='white', background='black', style='normal', displa
     print(f"\033[{style_code};{colour_code};{background_code}m{msg}\033[0m")
 
 
-class DisplayAdapter:
+class PrintAdapter:
     """Adapter for display/printing operations."""
 
     def __init__(self, graphdb: Any) -> None:

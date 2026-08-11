@@ -273,7 +273,7 @@ class FakeEnvironmentAdapter:
         return self.fs
 
 
-class FakeAdapterRegistry:
+class FakeEnvironments:
     """In-memory registry of fake environment adapters."""
 
     def __init__(self, adapters: Dict[str, FakeEnvironmentAdapter], config: Optional[Any] = None) -> None:

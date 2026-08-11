@@ -1,13 +1,13 @@
 from __future__ import annotations
 
 from typing import Dict
-from graphdb.application.ports.gateways.prt_adapter_registry import AdapterRegistryPort
+from graphdb.adapters.environments import Environments
 
 
 class ConnectivityOperations:
     """Use case orchestrator for testing database environment connectivity."""
 
-    def __init__(self, registry: AdapterRegistryPort) -> None:
+    def __init__(self, registry: Environments) -> None:
         self.registry = registry
 
     def test_one(self, env_name: str) -> bool:

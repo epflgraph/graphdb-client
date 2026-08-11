@@ -2,13 +2,14 @@ from __future__ import annotations
 from typing import Any, Dict, List
 
 from graphdb.application.policies.pol_table import TableComparisonPolicy
-from graphdb.application.ports.gateways.prt_adapter_registry import AdapterRegistryPort, EnvironmentPort
+from graphdb.adapters.environments import Environments
+from graphdb.adapters.gateways.gtw_environment import EnvironmentGateway
 
 
 class CompareOperations:
     """Use case orchestrator for table and database metadata comparison."""
 
-    def __init__(self, registry: AdapterRegistryPort) -> None:
+    def __init__(self, registry: Environments) -> None:
         self.registry = registry
         self.policy = TableComparisonPolicy()
 
@@ -22,8 +23,8 @@ class CompareOperations:
         row_count_tolerance: float = 0.10,
         ignore_warnings: bool = False,
     ) -> Dict[str, Any]:
-        source_meta: EnvironmentPort = self.registry.get(source_env)
-        target_meta: EnvironmentPort = self.registry.get(target_env)
+        source_meta: EnvironmentGateway = self.registry.get(source_env)
+        target_meta: EnvironmentGateway = self.registry.get(target_env)
 
         if not source_meta.table_exists(source_schema, table_name):
             return {"error": f"Table {source_schema}.{table_name} does not exist in '{source_env}'"}
@@ -69,8 +70,8 @@ class CompareOperations:
         row_count_tolerance: float = 0.10,
         ignore_warnings: bool = False,
     ) -> List[Dict[str, Any]]:
-        source_meta: EnvironmentPort = self.registry.get(source_env)
-        target_meta: EnvironmentPort = self.registry.get(target_env)
+        source_meta: EnvironmentGateway = self.registry.get(source_env)
+        target_meta: EnvironmentGateway = self.registry.get(target_env)
 
         source_tables = set(source_meta.get_tables(source_schema))
         target_tables = set(target_meta.get_tables(target_schema))

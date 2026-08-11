@@ -12,7 +12,7 @@ from graphdb.entrypoints.cli.cmd_export import cmd_export
 from graphdb.entrypoints.cli.cmd_import import cmd_import
 from graphdb.entrypoints.cli.cmd_test import cmd_test
 from tests.fakes import (
-    FakeAdapterRegistry,
+    FakeEnvironments,
     FakeDatabaseAdapter,
     FakeDumpAdapter,
     FakeEnvironmentAdapter,
@@ -67,7 +67,7 @@ class TestCliConfigCommand(unittest.TestCase):
 
 class TestCliTestCommand(unittest.TestCase):
     def test_test_command_reports_connectivity(self):
-        registry = FakeAdapterRegistry({
+        registry = FakeEnvironments({
             "local": FakeEnvironmentAdapter(database=FakeDatabaseAdapter()),
         })
         args = _make_args(ctx=_make_args(registry=registry), env="local")
@@ -81,7 +81,7 @@ class TestCliExportCommand(unittest.TestCase):
     def test_export_command_calls_dump_for_each_table(self):
         dump = FakeDumpAdapter()
         schema = FakeSchemaAdapter(tables={"mydb": ["users"]})
-        registry = FakeAdapterRegistry({
+        registry = FakeEnvironments({
             "local": FakeEnvironmentAdapter(schema=schema, dump=dump, filesystem=FakeFilesystemAdapter()),
         })
         args = _make_args(
@@ -106,7 +106,7 @@ class TestCliImportCommand(unittest.TestCase):
         fs.files[Path("/tmp/in/users/CREATE_TABLE.sql")] = "CREATE TABLE users (id INT);"
         schema = FakeSchemaAdapter(databases=set())
         db = FakeDatabaseAdapter()
-        registry = FakeAdapterRegistry({
+        registry = FakeEnvironments({
             "local": FakeEnvironmentAdapter(database=db, schema=schema, filesystem=fs),
         })
         args = _make_args(
@@ -132,7 +132,7 @@ class TestCliCopyCommand(unittest.TestCase):
         source_schema = FakeSchemaAdapter(tables={"src": ["users"]})
         target_schema = FakeSchemaAdapter(databases=set())
         fs = FakeFilesystemAdapter()
-        registry = FakeAdapterRegistry({
+        registry = FakeEnvironments({
             "src": FakeEnvironmentAdapter(schema=source_schema, dump=source_dump, filesystem=fs),
             "dst": FakeEnvironmentAdapter(database=target_db, schema=target_schema, filesystem=fs),
         })
@@ -157,7 +157,7 @@ class TestCliCompareCommand(unittest.TestCase):
             ("SELECT COUNT(*) FROM `dst`.`users`", "dst"): [[100]],
         })
         schema = FakeSchemaAdapter(tables={"src": ["users"], "dst": ["users"]})
-        registry = FakeAdapterRegistry({
+        registry = FakeEnvironments({
             "src": FakeEnvironmentAdapter(database=db, schema=schema),
             "dst": FakeEnvironmentAdapter(database=db, schema=schema),
         })
