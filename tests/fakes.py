@@ -123,8 +123,8 @@ class FakeSchemaAdapter:
     def get_column_names(self, schema_name: str, table_name: str) -> List[str]:
         return self.columns.get(f"{schema_name}.{table_name}", [])
 
-    def get_column_datatypes(self, schema_name: str, table_name: str) -> List[str]:
-        return ["INT"] * len(self.get_column_names(schema_name, table_name))
+    def get_column_datatypes(self, schema_name: str, table_name: str) -> Dict[str, str]:
+        return {name: "INT" for name in self.get_column_names(schema_name, table_name)}
 
     def has_primary_key(self, schema_name: str, table_name: str) -> bool:
         return "PRIMARY" in self.keys.get(f"{schema_name}.{table_name}", {})

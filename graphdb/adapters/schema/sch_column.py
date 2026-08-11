@@ -1,6 +1,6 @@
 from __future__ import annotations
 
-from typing import List
+from typing import Dict, List
 
 from sqlalchemy.engine import Engine
 
@@ -9,37 +9,38 @@ from graphdb.domain.models.entities.mdl_table import Column
 
 
 class ColumnSchemaAdapter:
-    """Adapter for column-level schema introspection."""
+    """Adapter for column-level schema introspection.
+
+    Executes the same SQL as graphdb.application.core.app_graphdb.GraphDB.
+    """
 
     def __init__(self, engine: Engine) -> None:
         self._exec = SchemaExecutor(engine)
 
     def column_exists(self, schema_name: str, table_name: str, column_name: str) -> bool:
         query = (
-            "SELECT COUNT(*) FROM information_schema.columns "
-            f"WHERE table_schema = '{schema_name}' AND table_name = '{table_name}' "
-            f"AND column_name = '{column_name}'"
+            "SELECT COLUMN_NAME FROM INFORMATION_SCHEMA.COLUMNS "
+            f"WHERE TABLE_SCHEMA = '{schema_name}' "
+            f"AND TABLE_NAME   = '{table_name}' "
+            f"AND COLUMN_NAME  = '{column_name}'"
         )
-        return int(self._exec.execute(query)[0][0]) > 0
+        return len(self._exec.execute(query)) > 0
 
     def get_column_names(self, schema_name: str, table_name: str) -> List[str]:
-        query = (
-            "SELECT column_name FROM information_schema.columns "
-            f"WHERE table_schema = '{schema_name}' AND table_name = '{table_name}' "
-            "ORDER BY ordinal_position"
-        )
-        return [row[0] for row in self._exec.execute(query)]
+        query = f"SHOW COLUMNS FROM {schema_name}.{table_name}"
+        return [row[0] for row in self._exec.execute(query) if row is not None]
 
-    def get_column_datatypes(self, schema_name: str, table_name: str) -> List[str]:
-        query = (
-            "SELECT column_type FROM information_schema.columns "
-            f"WHERE table_schema = '{schema_name}' AND table_name = '{table_name}' "
-            "ORDER BY ordinal_position"
-        )
-        return [row[0] for row in self._exec.execute(query)]
+    def get_column_datatypes(self, schema_name: str, table_name: str) -> Dict[str, str]:
+        query = f"SHOW COLUMNS FROM {schema_name}.{table_name}"
+        datatypes: Dict[str, str] = {}
+        for row in self._exec.execute(query):
+            if row is None:
+                continue
+            datatypes[row[0]] = row[1]
+        return datatypes
 
     def get_columns(self, schema_name: str, table_name: str) -> List[Column]:
-        """Return column definitions as domain entities."""
+        """Return column definitions as domain entities (extension)."""
         query = (
             "SELECT column_name, column_type, is_nullable, column_default "
             "FROM information_schema.columns "

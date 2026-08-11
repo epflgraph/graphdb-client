@@ -1,8 +1,8 @@
 from __future__ import annotations
 
-from typing import List
+import re
+from typing import List, Optional
 
-from sqlalchemy import text
 from sqlalchemy.engine import Engine
 
 from graphdb.adapters.schema.shared import SchemaExecutor, _q, _qt
@@ -10,7 +10,10 @@ from graphdb.domain.err_exceptions import SchemaError
 
 
 class TableSchemaAdapter:
-    """Adapter for table-level schema operations."""
+    """Adapter for table-level schema operations.
+
+    Executes the same SQL as graphdb.application.core.app_graphdb.GraphDB.
+    """
 
     def __init__(self, engine: Engine) -> None:
         self._exec = SchemaExecutor(engine)
@@ -18,30 +21,46 @@ class TableSchemaAdapter:
 
     def table_exists(self, schema_name: str, table_name: str, exclude_views: bool = False) -> bool:
         query = (
-            "SELECT COUNT(*) FROM information_schema.tables "
-            f"WHERE table_schema = '{schema_name}' AND table_name = '{table_name}'"
+            "SELECT TABLE_NAME FROM INFORMATION_SCHEMA.TABLES "
+            f"WHERE TABLE_SCHEMA = '{schema_name}' AND TABLE_NAME = '{table_name}'"
         )
         if exclude_views:
-            query += " AND table_type = 'BASE TABLE'"
-        return int(self._exec.execute(query)[0][0]) > 0
+            query += " AND TABLE_TYPE = 'BASE TABLE'"
+        return len(self._exec.execute(query)) > 0
 
-    def get_tables(self, schema_name: str, include_views: bool = False) -> List[str]:
+    def get_tables(
+        self,
+        schema_name: str,
+        include_views: bool = False,
+        filter_by: Optional[List[str]] = None,
+        use_regex: Optional[List[str]] = None,
+    ) -> List[str]:
         query = (
-            "SELECT table_name FROM information_schema.tables "
-            f"WHERE table_schema = '{schema_name}'"
+            "SELECT TABLE_NAME FROM INFORMATION_SCHEMA.TABLES "
+            f"WHERE TABLE_SCHEMA = '{schema_name}'"
         )
         if not include_views:
-            query += " AND table_type = 'BASE TABLE'"
-        return [row[0] for row in self._exec.execute(query)]
+            query += " AND TABLE_TYPE = 'BASE TABLE'"
+
+        tables = [row[0] for row in self._exec.execute(query)]
+
+        if filter_by and not use_regex:
+            tables = [t for t in tables if any(f in t for f in filter_by)]
+
+        if use_regex:
+            tables = [t for t in tables if any(re.search(f, t) for f in use_regex)]
+
+        return sorted(tables)
 
     def get_create_table(self, schema_name: str, table_name: str) -> str:
-        rows = self._exec.execute(f"SHOW CREATE TABLE {_qt(schema_name, table_name)}", schema_name)
+        query = f"SHOW CREATE TABLE {_q(schema_name)}.{_q(table_name)}"
+        rows = self._exec.execute(query, schema_name=schema_name)
         if not rows:
             raise SchemaError(f"Table {schema_name}.{table_name} not found")
         return rows[0][1]
 
     def drop_table(self, schema_name: str, table_name: str) -> None:
-        self._exec.execute_ddl(f"DROP TABLE IF EXISTS {_qt(schema_name, table_name)}")
+        self._exec.execute_ddl(f"DROP TABLE IF EXISTS {schema_name}.{table_name}")
 
     def create_table_like(
         self,
@@ -50,16 +69,13 @@ class TableSchemaAdapter:
         target_schema_name: str,
         target_table_name: str,
         drop_table: bool = False,
-    ) -> str:
-        """Create target table like source table and return the CREATE SQL."""
+    ) -> None:
         if drop_table:
             self.drop_table(target_schema_name, target_table_name)
-        create_sql = self.get_create_table(source_schema_name, source_table_name)
-        create_sql = create_sql.replace(
-            f"`{source_table_name}`", f"`{target_schema_name}`.`{target_table_name}`"
+        self._exec.execute_ddl(
+            f"CREATE TABLE IF NOT EXISTS {target_schema_name}.{target_table_name} "
+            f"LIKE {source_schema_name}.{source_table_name}"
         )
-        self._exec.execute_ddl(create_sql)
-        return create_sql
 
     def rename_table(
         self,
@@ -71,10 +87,8 @@ class TableSchemaAdapter:
     ) -> None:
         if simulation_mode:
             return
-        with self.engine.connect() as connection:
-            if replace_existing:
-                connection.execute(text(f"DROP TABLE IF EXISTS {_qt(schema_name, rename_to)}"))
-            connection.execute(
-                text(f"RENAME TABLE {_qt(schema_name, table_name)} TO {_qt(schema_name, rename_to)}")
-            )
-            connection.commit()
+        if replace_existing:
+            self.drop_table(schema_name, rename_to)
+        self._exec.execute_ddl(
+            f"ALTER TABLE {schema_name}.{table_name} RENAME {schema_name}.{rename_to}"
+        )

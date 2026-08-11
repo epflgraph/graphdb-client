@@ -7,7 +7,8 @@ from sqlalchemy.engine import Engine
 
 
 def _q(name: str) -> str:
-    return f"`{name}`"
+    """Backtick-quote a single SQL identifier, escaping embedded backticks."""
+    return f"`{name.replace('`', '``')}`"
 
 
 def _qt(schema_name: str, table_name: str) -> str:

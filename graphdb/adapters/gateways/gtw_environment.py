@@ -169,8 +169,16 @@ class EnvironmentGateway:
     def table_exists(self, schema_name: str, table_name: str, exclude_views: bool = False) -> bool:
         return self._table.table_exists(schema_name, table_name, exclude_views=exclude_views)
 
-    def get_tables(self, schema_name: str, include_views: bool = False) -> List[str]:
-        return self._table.get_tables(schema_name, include_views=include_views)
+    def get_tables(
+        self,
+        schema_name: str,
+        include_views: bool = False,
+        filter_by: Optional[List[str]] = None,
+        use_regex: Optional[List[str]] = None,
+    ) -> List[str]:
+        return self._table.get_tables(
+            schema_name, include_views=include_views, filter_by=filter_by, use_regex=use_regex
+        )
 
     def get_create_table(self, schema_name: str, table_name: str) -> str:
         return self._table.get_create_table(schema_name, table_name)
@@ -230,7 +238,7 @@ class EnvironmentGateway:
     def get_column_names(self, schema_name: str, table_name: str) -> List[str]:
         return self._column.get_column_names(schema_name, table_name)
 
-    def get_column_datatypes(self, schema_name: str, table_name: str) -> List[str]:
+    def get_column_datatypes(self, schema_name: str, table_name: str) -> Dict[str, str]:
         return self._column.get_column_datatypes(schema_name, table_name)
 
     def get_columns(self, schema_name: str, table_name: str) -> List[Column]:
