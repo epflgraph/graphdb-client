@@ -1,11 +1,12 @@
 from __future__ import annotations
 
-from typing import List, Optional
+from typing import Dict, List, Optional
 
 from sqlalchemy import text
 from sqlalchemy.engine import Engine
 
 from graphdb.domain.err_exceptions import SchemaError
+from graphdb.domain.models.entities.mdl_table import Column, Key, Table, View
 
 
 def _q(name: str) -> str:
@@ -143,18 +144,79 @@ class SQLAlchemySchemaIntrospector:
         )
         return [row[0] for row in self._execute(query)]
 
-    def get_keys(self, schema_name: str, table_name: str) -> List[dict]:
+    def get_keys(self, schema_name: str, table_name: str) -> Dict[str, List[str]]:
+        """Return key name -> ordered list of column names."""
         query = (
-            "SELECT index_name, column_name, non_unique FROM information_schema.statistics "
+            "SELECT index_name, column_name FROM information_schema.statistics "
             f"WHERE table_schema = '{schema_name}' AND table_name = '{table_name}' "
             "ORDER BY index_name, seq_in_index"
         )
-        keys: dict = {}
+        keys: Dict[str, List[str]] = {}
+        for row in self._execute(query):
+            name, column = row[0], row[1]
+            keys.setdefault(name, []).append(column)
+        return keys
+
+    def get_columns(self, schema_name: str, table_name: str) -> List[Column]:
+        """Return column definitions as domain entities."""
+        query = (
+            "SELECT column_name, column_type, is_nullable, column_default "
+            "FROM information_schema.columns "
+            f"WHERE table_schema = '{schema_name}' AND table_name = '{table_name}' "
+            "ORDER BY ordinal_position"
+        )
+        columns: List[Column] = []
+        for row in self._execute(query):
+            name, datatype, nullable_str, default = row[0], row[1], row[2], row[3]
+            nullable = {"YES": True, "NO": False}.get(nullable_str) if nullable_str else None
+            columns.append(Column(name=name, datatype=datatype, nullable=nullable, default=default))
+        return columns
+
+    def get_key_entities(self, schema_name: str, table_name: str) -> List[Key]:
+        """Return keys/indexes as domain entities."""
+        query = (
+            "SELECT index_name, column_name, non_unique "
+            "FROM information_schema.statistics "
+            f"WHERE table_schema = '{schema_name}' AND table_name = '{table_name}' "
+            "ORDER BY index_name, seq_in_index"
+        )
+        key_columns: Dict[str, List[str]] = {}
+        key_unique: Dict[str, bool] = {}
         for row in self._execute(query):
             name, column, non_unique = row[0], row[1], row[2]
-            keys.setdefault(name, {"name": name, "columns": [], "unique": non_unique == 0})
-            keys[name]["columns"].append(column)
-        return list(keys.values())
+            key_columns.setdefault(name, []).append(column)
+            key_unique[name] = non_unique == 0
+        return [
+            Key(name=name, columns=columns, unique=key_unique.get(name, False), primary=name == "PRIMARY")
+            for name, columns in key_columns.items()
+        ]
+
+    def describe_table(self, schema_name: str, table_name: str) -> Table:
+        """Return a full Table domain entity."""
+        create_sql = self.get_create_table(schema_name, table_name)
+        columns = self.get_columns(schema_name, table_name)
+        keys = self.get_key_entities(schema_name, table_name)
+        table_info = self._execute(
+            "SELECT engine, table_collation, row_format FROM information_schema.tables "
+            f"WHERE table_schema = '{schema_name}' AND table_name = '{table_name}'"
+        )
+        engine = table_info[0][0] if table_info else None
+        collation = table_info[0][1] if table_info else None
+        row_format = table_info[0][2] if table_info else None
+        return Table(
+            name=table_name,
+            engine=engine,
+            collation=collation,
+            row_format=row_format,
+            columns=columns,
+            keys=keys,
+            create_sql=create_sql,
+        )
+
+    def describe_view(self, schema_name: str, view_name: str) -> View:
+        """Return a View domain entity."""
+        create_sql = self.get_create_view(schema_name, view_name)
+        return View(name=view_name, create_sql=create_sql)
 
     def create_table_like(
         self,

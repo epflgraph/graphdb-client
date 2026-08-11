@@ -64,7 +64,7 @@ class FakeSchemaAdapter:
         self.views: Dict[str, List[str]] = views or {}
         self.create_statements = create_statements or {}
         self.columns: Dict[str, List[str]] = {}
-        self.keys: Dict[str, List[dict]] = {}
+        self.keys: Dict[str, Dict[str, List[str]]] = {}
 
     def database_exists(self, schema_name: str) -> bool:
         return schema_name in self.databases
@@ -103,7 +103,7 @@ class FakeSchemaAdapter:
         return column_name in self.columns.get(f"{schema_name}.{table_name}", [])
 
     def key_exists(self, schema_name: str, table_name: str, key_name: str) -> bool:
-        return any(k["name"] == key_name for k in self.keys.get(f"{schema_name}.{table_name}", []))
+        return key_name in self.keys.get(f"{schema_name}.{table_name}", {})
 
     def get_tables(self, schema_name: str, include_views: bool = False) -> List[str]:
         return self.tables.get(schema_name, [])
@@ -127,13 +127,13 @@ class FakeSchemaAdapter:
         return ["INT"] * len(self.get_column_names(schema_name, table_name))
 
     def has_primary_key(self, schema_name: str, table_name: str) -> bool:
-        return any(k.get("primary") for k in self.keys.get(f"{schema_name}.{table_name}", []))
+        return "PRIMARY" in self.keys.get(f"{schema_name}.{table_name}", {})
 
     def get_primary_keys(self, schema_name: str, table_name: str) -> List[str]:
-        return [k["columns"][0] for k in self.keys.get(f"{schema_name}.{table_name}", []) if k.get("primary")]
+        return self.keys.get(f"{schema_name}.{table_name}", {}).get("PRIMARY", [])
 
-    def get_keys(self, schema_name: str, table_name: str) -> List[dict]:
-        return self.keys.get(f"{schema_name}.{table_name}", [])
+    def get_keys(self, schema_name: str, table_name: str) -> Dict[str, List[str]]:
+        return self.keys.get(f"{schema_name}.{table_name}", {})
 
     def create_table_like(self, *args, **kwargs) -> None:
         pass

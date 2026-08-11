@@ -12,6 +12,7 @@ from graphdb.adapters.gateways.gtw_sqlalchemy import (
 )
 from graphdb.adapters.schema.sch_introspector import SQLAlchemySchemaIntrospector
 from graphdb.domain.mdl_connection import ConnectionParams
+from graphdb.domain.models.entities.mdl_table import Column, Key, Table, View
 
 
 class EnvironmentGateway:
@@ -198,8 +199,20 @@ class EnvironmentGateway:
     def get_primary_keys(self, schema_name: str, table_name: str) -> List[str]:
         return self._schema.get_primary_keys(schema_name, table_name)
 
-    def get_keys(self, schema_name: str, table_name: str) -> List[dict]:
+    def get_keys(self, schema_name: str, table_name: str) -> Dict[str, List[str]]:
         return self._schema.get_keys(schema_name, table_name)
+
+    def get_columns(self, schema_name: str, table_name: str) -> List[Column]:
+        return self._schema.get_columns(schema_name, table_name)
+
+    def get_key_entities(self, schema_name: str, table_name: str) -> List[Key]:
+        return self._schema.get_key_entities(schema_name, table_name)
+
+    def describe_table(self, schema_name: str, table_name: str) -> Table:
+        return self._schema.describe_table(schema_name, table_name)
+
+    def describe_view(self, schema_name: str, view_name: str) -> View:
+        return self._schema.describe_view(schema_name, view_name)
 
     def create_table_like(
         self,
