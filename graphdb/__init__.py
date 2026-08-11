@@ -4,7 +4,7 @@ import shutil
 
 def _ensure_default_config() -> None:
     """
-    Ensure config.yaml exists at the location expected by graphdb.core.graphdb.
+    Ensure config.yaml exists at the repository root for the GraphDB CLI.
     """
     package_dir = Path(__file__).resolve().parent
     target_config = package_dir.parent / "config.yaml"
