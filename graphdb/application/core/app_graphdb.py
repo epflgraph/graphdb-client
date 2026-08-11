@@ -18,7 +18,7 @@ from graphdb.utils.cmn_table import get_table_type_from_name
 # New architecture imports (incremental migration)
 from graphdb.application.factories.fct_adapter_registry import AdapterRegistry
 from graphdb.domain.mdl_connection import ConnectionParams
-from graphdb.utils.cmn_ssl_options import (
+from graphdb.adapters.gateways.utils import (
     normalize_ssl_options,
     parse_bool,
     build_ssl_connect_args,
@@ -115,28 +115,6 @@ class GraphDB():
         self._integrity_adapter = DataIntegrityAdapter(self)
         self._cell_adapter = DataCellAdapter(self)
 
-    #-------------------------------#
-    # SSL helpers                   #
-    #-------------------------------#
-    @staticmethod
-    def _normalize_ssl_options(raw_ssl):
-        return normalize_ssl_options(raw_ssl)
-
-    @staticmethod
-    def _parse_bool(value):
-        return parse_bool(value)
-
-    @classmethod
-    def _build_ssl_connect_args(cls, ssl_options):
-        return build_ssl_connect_args(ssl_options)
-
-    @classmethod
-    def _detect_cli_option_names(cls, base_command):
-        return detect_cli_option_names(base_command)
-
-    @classmethod
-    def _build_ssl_cli_flags(cls, ssl_options, supported_options=None, engine_flavor=None):
-        return build_ssl_cli_flags(ssl_options, supported_options=supported_options, engine_flavor=engine_flavor)
 
 #================#
 # Main execution #

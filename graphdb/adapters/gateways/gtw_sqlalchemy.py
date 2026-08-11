@@ -8,7 +8,7 @@ from sqlalchemy import create_engine, event, text
 from sqlalchemy.engine import Engine
 from sqlalchemy.exc import DataError, IntegrityError, SQLAlchemyError
 
-from graphdb.utils.cmn_ssl_options import build_ssl_connect_args
+from graphdb.adapters.gateways.utils import build_ssl_connect_args
 from graphdb.domain.err_exceptions import QueryExecutionError
 from graphdb.domain.mdl_connection import ConnectionParams
 

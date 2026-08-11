@@ -11,7 +11,7 @@ from typing import Any, Dict, Optional, Set, Tuple
 from graphdb.domain.err_exceptions import ExportError
 from graphdb.domain.mdl_connection import ConnectionParams
 
-from graphdb.utils.cmn_ssl_options import (
+from graphdb.adapters.gateways.utils import (
     build_ssl_cli_flags,
     detect_cli_option_names,
 )
