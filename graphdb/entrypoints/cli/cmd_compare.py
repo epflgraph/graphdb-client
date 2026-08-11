@@ -55,6 +55,28 @@ def cmd_compare(args):
 
     service = args.ctx.container.compare_ops
 
+    if args.random_sampling:
+        if args.table_name:
+            service.compare_tables_by_random_sampling(
+                args.from_env,
+                args.from_schema,
+                args.table_name,
+                args.to_env,
+                args.to_schema,
+                args.table_name,
+                sample_size=args.sample_size,
+            )
+        else:
+            service.compare_databases_by_random_sampling(
+                args.from_env,
+                args.from_schema,
+                args.to_env,
+                args.to_schema,
+                sample_size=args.sample_size,
+            )
+        print("🖥️  ~ Done.")
+        return
+
     if args.table_name:
         result = service.compare_tables(
             args.from_env,

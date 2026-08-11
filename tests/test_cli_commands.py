@@ -176,6 +176,8 @@ class TestCliCompareCommand(unittest.TestCase):
             table_name="users",
             row_count_tolerance=0.10,
             ignore_warnings=False,
+            random_sampling=False,
+            sample_size=1024,
         )
         with patch("builtins.print"):
             cmd_compare(args)

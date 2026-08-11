@@ -1,16 +1,22 @@
 from __future__ import annotations
-from typing import Any, Dict, List
+from typing import Any, Dict, List, Optional
 
 from graphdb.application.policies.pol_table import TableComparisonPolicy
+from graphdb.adapters.data.dta_compare import DataCompareAdapter
 from graphdb.adapters.environments import Environments
 from graphdb.adapters.gateways.gtw_environment import EnvironmentGateway
 
 
 class CompareOperations:
-    """Use case orchestrator for table and database metadata comparison."""
+    """Use case orchestrator for table and database comparison."""
 
-    def __init__(self, registry: Environments) -> None:
+    def __init__(
+        self,
+        registry: Environments,
+        compare_adapter: Optional[DataCompareAdapter] = None,
+    ) -> None:
         self.registry = registry
+        self.compare_adapter = compare_adapter
         self.policy = TableComparisonPolicy()
 
     def compare_tables(
@@ -84,6 +90,59 @@ class CompareOperations:
             )
             for tbl in all_tables
         ]
+
+    def compare_tables_by_random_sampling(
+        self,
+        source_env: str,
+        source_schema: str,
+        source_table_name: str,
+        target_env: str,
+        target_schema: str,
+        target_table_name: str,
+        sample_size: int = 1024,
+    ) -> None:
+        """Compare two tables by randomly sampling rows.
+
+        Delegates to the legacy DataCompareAdapter until it is refactored to
+        work directly with Environments.
+        """
+        if self.compare_adapter is None:
+            raise RuntimeError("DataCompareAdapter not configured")
+        self.compare_adapter.compare_tables_by_random_sampling(
+            source_engine_name=source_env,
+            source_schema_name=source_schema,
+            source_table_name=source_table_name,
+            target_engine_name=target_env,
+            target_schema_name=target_schema,
+            target_table_name=target_table_name,
+            sample_size=sample_size,
+        )
+
+    def compare_databases_by_random_sampling(
+        self,
+        source_env: str,
+        source_schema: str,
+        target_env: str,
+        target_schema: str,
+        sample_size: int = 1024,
+    ) -> None:
+        """Compare all tables across two schemas by random sampling."""
+        if self.compare_adapter is None:
+            raise RuntimeError("DataCompareAdapter not configured")
+        source_meta: EnvironmentGateway = self.registry.get(source_env)
+        target_meta: EnvironmentGateway = self.registry.get(target_env)
+        source_tables = set(source_meta.get_tables(source_schema))
+        target_tables = set(target_meta.get_tables(target_schema))
+        for table_name in sorted(source_tables | target_tables):
+            self.compare_adapter.compare_tables_by_random_sampling(
+                source_engine_name=source_env,
+                source_schema_name=source_schema,
+                source_table_name=table_name,
+                target_engine_name=target_env,
+                target_schema_name=target_schema,
+                target_table_name=table_name,
+                sample_size=sample_size,
+            )
 
     @staticmethod
     def _extract_metrics(source_row: Dict[str, Any], target_row: Dict[str, Any]):
