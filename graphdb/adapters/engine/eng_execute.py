@@ -14,8 +14,9 @@ from sqlalchemy.dialects.mysql import dialect as MySQLDialect
 from sqlalchemy.exc import DataError, IntegrityError, SQLAlchemyError
 from tqdm import tqdm
 
-from graphdb.adapters.display.dis_print import print_colour
-from graphdb.utils.mdl_sqlquery import print_dataframe, print_sql
+from graphdb.adapters.rendering.rdr_print import print_colour
+from graphdb.adapters.rendering.rdr_dataframe import print_dataframe
+from graphdb.adapters.rendering.rdr_sqlquery import print_sql
 
 
 class EngineExecuteAdapter:

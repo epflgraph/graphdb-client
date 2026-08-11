@@ -3,7 +3,7 @@ from __future__ import annotations
 from typing import Any
 
 from graphdb.adapters.gateways.gtw_sqlalchemy import create_sqlalchemy_engine
-from graphdb.domain.mdl_connection import ConnectionParams
+from graphdb.domain.models.mdl_connection import ConnectionParams
 
 
 class EngineInitiateAdapter:

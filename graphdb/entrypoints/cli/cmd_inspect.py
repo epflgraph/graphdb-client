@@ -1,7 +1,8 @@
 # graphdb/cli/commands/inspect.py
 import json
 
-from graphdb.utils.mdl_sqlquery import SQLQuery
+from graphdb.adapters.rendering.rdr_sqlquery import print_query, print_query_debug
+from graphdb.domain.models.mdl_sqlquery import SQLQuery
 
 
 def cmd_inspect(args):
@@ -73,8 +74,8 @@ def cmd_inspect(args):
             print(f"\nTiming demo failure captured: {exc}")
 
     if args.debug:
-        query_obj.print_debug()
+        print_query_debug(query_obj)
     else:
-        query_obj.print()
+        print_query(query_obj)
 
     print("🖥️  ~ Done.")

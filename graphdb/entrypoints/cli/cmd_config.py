@@ -6,7 +6,7 @@ import rich
 from yaml import safe_load
 
 from graphdb.application.operations.ops_config import ConfigOperations
-from graphdb.domain.mdl_config import GraphDBConfig, GraphDBConfigError
+from graphdb.domain.models.mdl_config import GraphDBConfig, GraphDBConfigError
 
 
 def cmd_config(args):

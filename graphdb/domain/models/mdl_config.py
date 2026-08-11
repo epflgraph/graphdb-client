@@ -8,7 +8,7 @@ from typing import Any, Dict, Optional
 
 from yaml import safe_load
 
-from graphdb.domain.err_exceptions import GraphDBError
+from graphdb.domain.exceptions import GraphDBError
 
 
 class GraphDBConfigError(GraphDBError, ValueError):

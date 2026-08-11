@@ -5,7 +5,7 @@ from typing import Any
 import pandas as pd
 from loguru import logger as sysmsg
 
-from graphdb.utils.mdl_sqlquery import print_dataframe
+from graphdb.adapters.rendering.rdr_dataframe import print_dataframe
 
 
 class DataIntegrityAdapter:

@@ -5,7 +5,7 @@ from typing import Any, Dict
 from yaml import safe_load
 
 from graphdb.application.ports.gateways.prt_config_loader import ConfigLoaderPort
-from graphdb.domain.mdl_config import GraphDBConfig
+from graphdb.domain.models.mdl_config import GraphDBConfig
 
 
 class YAMLConfigLoaderGateway(ConfigLoaderPort):

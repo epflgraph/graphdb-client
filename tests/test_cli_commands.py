@@ -4,7 +4,7 @@ from pathlib import Path
 from unittest.mock import patch
 
 from graphdb.application.operations.ops_config import ConfigOperations
-from graphdb.domain.mdl_config import GraphDBConfig
+from graphdb.domain.models.mdl_config import GraphDBConfig
 from graphdb.entrypoints.cli.cmd_config import cmd_config
 from graphdb.entrypoints.cli.cmd_compare import cmd_compare, _print_table_result
 from graphdb.entrypoints.cli.cmd_copy import cmd_copy
@@ -26,11 +26,11 @@ def _make_args(**kwargs):
 
 
 class TestCliConfigCommand(unittest.TestCase):
-    @patch("graphdb.domain.mdl_config.GraphDBConfig.default_path")
+    @patch("graphdb.domain.models.mdl_config.GraphDBConfig.default_path")
     @patch("graphdb.entrypoints.cli.cmd_config.GraphDBConfig.from_default_file")
     @patch("rich.print_json")
     def test_config_command_redacts_passwords(self, mock_print_json, mock_from_default, mock_default_path):
-        from graphdb.domain.mdl_config import GraphDBConfig
+        from graphdb.domain.models.mdl_config import GraphDBConfig
         import tempfile, os
         cfg = GraphDBConfig.from_dict({
             "client_bin": "mysql",

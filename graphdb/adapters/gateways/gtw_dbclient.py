@@ -7,8 +7,8 @@ import subprocess
 from pathlib import Path
 from typing import Optional
 
-from graphdb.domain.err_exceptions import QueryExecutionError
-from graphdb.domain.mdl_connection import ConnectionParams
+from graphdb.domain.exceptions import QueryExecutionError
+from graphdb.domain.models.mdl_connection import ConnectionParams
 
 
 import os
@@ -19,7 +19,7 @@ from graphdb.adapters.gateways.utils import (
     build_ssl_cli_flags,
     detect_cli_option_names,
 )
-from graphdb.domain.mdl_connection import ConnectionParams
+from graphdb.domain.models.mdl_connection import ConnectionParams
 
 
 def _build_mysql_base_command(params: ConnectionParams) -> tuple[list[str], Dict[str, str]]:

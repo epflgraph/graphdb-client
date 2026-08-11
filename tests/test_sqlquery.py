@@ -2,7 +2,8 @@ import unittest
 
 from rich.console import Console
 
-from graphdb.utils.mdl_sqlquery import SQLQuery, print_sql
+from graphdb.adapters.rendering.rdr_sqlquery import meta_text, print_sql
+from graphdb.domain.models.mdl_sqlquery import SQLQuery
 
 
 class TestSQLQuery(unittest.TestCase):
@@ -28,7 +29,7 @@ class TestSQLQuery(unittest.TestCase):
 
     def test_redaction_in_meta_by_default(self):
         q = SQLQuery(query="SELECT 1", params={"password": "secret", "token": "abc", "id": 7})
-        meta = q.meta_text().plain
+        meta = meta_text(q).plain
         self.assertIn("***REDACTED***", meta)
         self.assertNotIn("secret", meta)
         self.assertNotIn("abc", meta)

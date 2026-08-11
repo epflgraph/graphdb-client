@@ -1,6 +1,6 @@
 import unittest
 
-from graphdb.domain.mdl_config import GraphDBConfig, GraphDBConfigError, EnvironmentConfig
+from graphdb.domain.models.mdl_config import GraphDBConfig, GraphDBConfigError, EnvironmentConfig
 
 
 class TestDomainConfig(unittest.TestCase):

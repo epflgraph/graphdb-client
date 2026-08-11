@@ -17,8 +17,8 @@ from graphdb.adapters.schema.sch_database import DatabaseSchemaAdapter
 from graphdb.adapters.schema.sch_key import KeySchemaAdapter
 from graphdb.adapters.schema.sch_table import TableSchemaAdapter
 from graphdb.adapters.schema.sch_view import ViewSchemaAdapter
-from graphdb.domain.mdl_connection import ConnectionParams
-from graphdb.domain.models.entities.mdl_table import Column, Key, Table, View
+from graphdb.domain.models.mdl_connection import ConnectionParams
+from graphdb.domain.models.mdl_table import Column, Key, Table, View
 
 
 class EnvironmentGateway:

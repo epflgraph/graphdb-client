@@ -6,7 +6,7 @@ from typing import List
 from sqlalchemy.engine import Engine
 
 from graphdb.adapters.schema.shared import SchemaExecutor, _q
-from graphdb.domain.err_exceptions import SchemaError
+from graphdb.domain.exceptions import SchemaError
 
 
 class ViewSchemaAdapter:

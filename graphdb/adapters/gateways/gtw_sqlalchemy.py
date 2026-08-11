@@ -9,8 +9,8 @@ from sqlalchemy.engine import Engine
 from sqlalchemy.exc import DataError, IntegrityError, SQLAlchemyError
 
 from graphdb.adapters.gateways.utils import build_ssl_connect_args
-from graphdb.domain.err_exceptions import QueryExecutionError
-from graphdb.domain.mdl_connection import ConnectionParams
+from graphdb.domain.exceptions import QueryExecutionError
+from graphdb.domain.models.mdl_connection import ConnectionParams
 
 
 def create_sqlalchemy_engine(params: ConnectionParams) -> Engine:

@@ -2,7 +2,7 @@ from graphdb.application.operations.ops_copy import CopyOperations
 from graphdb.application.operations.ops_export import ExportOperations
 from graphdb.application.operations.ops_import import ImportOperations
 from graphdb.application.factories.fct_adapter_registry import Environments
-from graphdb.domain.mdl_config import GraphDBConfig
+from graphdb.domain.models.mdl_config import GraphDBConfig
 
 
 class Container:

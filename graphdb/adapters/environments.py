@@ -3,8 +3,8 @@ from __future__ import annotations
 from typing import Dict, List, Optional
 
 from graphdb.adapters.gateways.gtw_environment import EnvironmentGateway
-from graphdb.domain.mdl_config import GraphDBConfig
-from graphdb.domain.mdl_connection import ConnectionParams
+from graphdb.domain.models.mdl_config import GraphDBConfig
+from graphdb.domain.models.mdl_connection import ConnectionParams
 
 
 class Environments:
@@ -39,7 +39,3 @@ class Environments:
     def default(self) -> EnvironmentGateway:
         """Return the EnvironmentGateway for the default environment."""
         return self.get(self.config.default_env)
-
-
-# Backward-compatible alias for code still referencing the old name.
-Environments = Environments

@@ -12,12 +12,12 @@ import pandas as pd
 from tabulate import tabulate
 import sys, os, re, subprocess, json, datetime, hashlib, random, glob, time, rich, ssl, shlex, shutil, gzip, tempfile, types
 from graphdb.application.core.cfg_config import GraphDBConfig, GraphDBConfigError
-from graphdb.utils.mdl_sqlquery import print_sql
+from graphdb.adapters.rendering.rdr_sqlquery import print_sql
 from graphdb.utils.cmn_table import get_table_type_from_name
 
 # New architecture imports (incremental migration)
 from graphdb.application.factories.fct_adapter_registry import Environments
-from graphdb.domain.mdl_connection import ConnectionParams
+from graphdb.domain.models.mdl_connection import ConnectionParams
 from graphdb.adapters.gateways.utils import (
     normalize_ssl_options,
     parse_bool,
@@ -33,7 +33,7 @@ from graphdb.adapters.data.dta_compare import DataCompareAdapter
 from graphdb.adapters.data.dta_copy import DataCopyAdapter
 from graphdb.adapters.data.dta_export import DataExportAdapter
 from graphdb.adapters.data.dta_import import DataImportAdapter
-from graphdb.adapters.display.dis_print import DisplayAdapter, print_colour
+from graphdb.adapters.rendering.rdr_print import PrintAdapter, print_colour
 from graphdb.adapters.data.dta_integrity import DataIntegrityAdapter
 from graphdb.adapters.persistence.prs_cell import DataCellAdapter
 
@@ -111,7 +111,7 @@ class GraphDB():
         self._copy_adapter = DataCopyAdapter(self)
         self._export_adapter = DataExportAdapter(self)
         self._import_adapter = DataImportAdapter(self)
-        self._display_adapter = DisplayAdapter(self)
+        self._display_adapter = PrintAdapter(self)
         self._integrity_adapter = DataIntegrityAdapter(self)
         self._cell_adapter = DataCellAdapter(self)
 

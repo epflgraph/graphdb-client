@@ -7,7 +7,7 @@ from typing import Any, Dict, List
 from sqlalchemy.engine import Engine
 
 from graphdb.adapters.schema.shared import SchemaExecutor
-from graphdb.domain.models.entities.mdl_table import Column
+from graphdb.domain.models.mdl_table import Column
 
 
 # Estimated processing times per operation (in seconds per row)

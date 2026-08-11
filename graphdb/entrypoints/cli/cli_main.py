@@ -9,7 +9,7 @@ import typer
 
 from graphdb.application.factories.fct_adapter_registry import Environments
 from graphdb.application.operations.ops_config import ConfigOperations
-from graphdb.domain.mdl_config import GraphDBConfig
+from graphdb.domain.models.mdl_config import GraphDBConfig
 from graphdb.entrypoints.cli.cli_context import CLIContext
 from graphdb.entrypoints.cli import (
     cmd_config,
