@@ -1,18 +1,24 @@
+# graphdb/application/compare_service.py
 from __future__ import annotations
-
 from collections.abc import Mapping, Sequence
 from typing import Any, Dict, List, Optional, Tuple
-
 from graphdb.application.adapter_registry import AdapterRegistry
 from graphdb.core.graphdb import GraphDB
 
-
+# Class CompareService is an application service that provides methods for
+# comparing tables and databases across different environments. It utilizes
+# the AdapterRegistry to access the appropriate EnvironmentAdapter instances
+# for each environment.
 class CompareService:
     """Application service for comparing tables and databases across environments."""
 
+    # The CompareService is initialized with an AdapterRegistry instance, which
+    # it uses to retrieve EnvironmentAdapter instances for the specified environments.
     def __init__(self, registry: AdapterRegistry) -> None:
         self.registry = registry
 
+    # The _EXPECTED_COLS list defines the expected columns in the comparison results,
+    # which are used to structure the output of the comparison methods.
     _EXPECTED_COLS = [
         "table_schema",
         "table_name",
@@ -31,6 +37,11 @@ class CompareService:
         "avg_row_length",
     ]
 
+    # The _COMPARISON_SQL string defines the SQL query used to fetch metadata for a specific table
+    # from the information_schema. It retrieves various attributes of the table, such as
+    # its schema, name, engine, collation, row format, row count, data length, index length,
+    # total bytes, column count, nullable columns, columns with default values, index count,
+    # unique index count, and average row length.
     _COMPARISON_SQL = """
         SELECT
             it.table_schema,
@@ -59,6 +70,12 @@ class CompareService:
         AND it.table_name = '%s'
     """
 
+    # Method: Compares the metadata of a specific table between two environments.
+    # It retrieves the EnvironmentAdapter instances for the source and target environments,
+    # checks if the table exists in both environments, fetches the metadata, and compares the
+    # relevant attributes. It returns a dictionary containing the comparison results, including
+    # the status of each attribute (OK, ERR, or WARN) and whether there were any errors or
+    # warnings in the comparison.
     def compare_tables(
         self,
         source_env: str,
@@ -113,6 +130,10 @@ class CompareService:
             "ignore_warnings": ignore_warnings,
         }
 
+    # Method: Compares all tables between two specified environments and schemas.
+    # It retrieves the EnvironmentAdapter instances for the source and target environments,
+    # fetches the list of tables in each schema, and iterates over the union of the table names.
+    # For each table, it calls the compare_tables method to perform the comparison and collects the results.
     def compare_databases(
         self,
         source_env: str,
@@ -143,6 +164,10 @@ class CompareService:
             results.append(result)
         return results
 
+    # Method: Compares two tables using a legacy random-sampling method.
+    # It retrieves the EnvironmentAdapter instances for the source and target environments, checks if the
+    # table exists in both environments, and then calls the GraphDB's compare_tables_by_random_sampling
+    # method to perform the comparison. The results are printed directly by the GraphDB instance.
     def compare_tables_by_random_sampling(
         self,
         source_env: str,
@@ -177,6 +202,9 @@ class CompareService:
         )
         return {"ok": True}
 
+    # Method: Compares all tables present in both schemas using the legacy random-sampling method.
+    # It retrieves the EnvironmentAdapter instances for the source and target environments,
+    # fetches the list of tables in each schema, and iterates over the intersection of the table names.
     def compare_databases_by_random_sampling(
         self,
         source_env: str,
@@ -206,14 +234,20 @@ class CompareService:
             results.append(result)
         return results
 
+    # Helper method: Executes the comparison SQL query for a specific table
+    # in a given schema and retrieves the first row of the result as a dictionary.
     def _fetch_metadata(self, adapter, schema_name: str, table_name: str) -> Dict[str, Any]:
         rows = adapter.execute(self._COMPARISON_SQL % (schema_name, table_name), schema_name=schema_name)
         return self._first_row_as_dict(rows, columns=self._EXPECTED_COLS) or {}
 
+    # Helper method: Executes a SQL query to count the exact number of rows in a specific table
+    # within a given schema. It returns the count as an integer.
     def _exact_count(self, adapter, schema_name: str, table_name: str) -> int:
         rows = adapter.execute(f"SELECT COUNT(*) FROM `{schema_name}`.`{table_name}`", schema_name=schema_name)
         return int(rows[0][0]) if rows else 0
 
+    # Helper method: Converts the first row of a query result into a dictionary, mapping column names to values.
+    # If the result is empty or not in the expected format, it returns None.
     @staticmethod
     def _first_row_as_dict(result: Any, *, columns: List[str]) -> Optional[Dict[str, Any]]:
         if not result or not isinstance(result, (list, tuple)):
@@ -228,6 +262,9 @@ class CompareService:
             return dict(zip(columns, vals))
         return None
 
+    # Helper method: Compares the row counts of two tables and determines the status based on a specified tolerance.
+    # It returns "OK" if the counts are equal, "WARN" if the relative difference is within the tolerance,
+    # and "ERR" if the counts differ significantly or if either count is None.
     @staticmethod
     def _row_count_status(a: Any, b: Any, tol: float) -> str:
         try:

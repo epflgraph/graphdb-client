@@ -8,10 +8,8 @@ from typing import Any, Dict, Optional
 
 from yaml import safe_load
 
-from graphdb.domain.exceptions import GraphDBError
 
-
-class GraphDBConfigError(GraphDBError, ValueError):
+class GraphDBConfigError(ValueError):
     """Raised when configuration is missing, malformed, or inconsistent."""
 
 
@@ -90,7 +88,7 @@ class EnvironmentConfig:
     sqlalchemy_driver: Optional[str] = None
 
     @classmethod
-    def from_dict(cls, env_name: str, raw: Dict[str, Any]) -> EnvironmentConfig:
+    def from_dict(cls, env_name: str, raw: Dict[str, Any]) -> "EnvironmentConfig":
         required = ("host_address", "port", "username", "password")
         missing = [k for k in required if k not in raw]
         if missing:
@@ -182,7 +180,7 @@ class GraphDBConfig:
         return unique
 
     @classmethod
-    def from_default_file(cls) -> GraphDBConfig:
+    def from_default_file(cls) -> "GraphDBConfig":
         for path in cls.default_paths():
             if path.exists():
                 return cls.from_file(path)
@@ -190,7 +188,7 @@ class GraphDBConfig:
         raise GraphDBConfigError(f"Config file not found. Searched: {searched}")
 
     @classmethod
-    def from_file(cls, path: Path | str) -> GraphDBConfig:
+    def from_file(cls, path: Path | str) -> "GraphDBConfig":
         cfg_path = Path(path)
         if not cfg_path.exists():
             raise GraphDBConfigError(f"Config file not found: {cfg_path}")
@@ -199,7 +197,7 @@ class GraphDBConfig:
         return cls.from_dict(raw)
 
     @classmethod
-    def from_dict(cls, raw: Dict[str, Any]) -> GraphDBConfig:
+    def from_dict(cls, raw: Dict[str, Any]) -> "GraphDBConfig":
         if not isinstance(raw, dict):
             raise GraphDBConfigError("config.yaml must parse into a dictionary.")
 

@@ -1,10 +1,7 @@
 from __future__ import annotations
 
 from dataclasses import dataclass
-from typing import TYPE_CHECKING, Any, Dict, Optional
-
-if TYPE_CHECKING:
-    from graphdb.domain.config import EnvironmentConfig
+from typing import Any, Dict, Optional
 
 
 @dataclass(frozen=True)
@@ -24,12 +21,7 @@ class ConnectionParams:
     sqlalchemy_driver: Optional[str] = None
 
     @classmethod
-    def from_environment(
-        cls,
-        env_name: str,
-        env_config: EnvironmentConfig,
-        defaults: Dict[str, Any],
-    ) -> ConnectionParams:
+    def from_environment(cls, env_name: str, env_config: "EnvironmentConfig", defaults: Dict[str, Any]) -> "ConnectionParams":
         from graphdb.domain.config import EnvironmentConfig
 
         if isinstance(env_config, EnvironmentConfig):
