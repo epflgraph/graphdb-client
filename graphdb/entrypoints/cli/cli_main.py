@@ -7,7 +7,7 @@ from typing import Optional
 
 import typer
 
-from graphdb.application.factories.fct_adapter_registry import Environments
+from graphdb.adapters.environments import Environments
 from graphdb.application.operations.ops_config import ConfigOperations
 from graphdb.domain.models.mdl_config import GraphDBConfig
 from graphdb.entrypoints.cli.cli_context import CLIContext

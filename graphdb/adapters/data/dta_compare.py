@@ -8,7 +8,7 @@ import pandas as pd
 from sqlalchemy import text
 from tqdm import tqdm
 
-from graphdb.utils.cmn_table import get_table_type_from_name
+from graphdb.lib.cmn_table import get_table_type_from_name
 
 
 class DataCompareAdapter:
