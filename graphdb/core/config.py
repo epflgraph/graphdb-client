@@ -1,7 +1,7 @@
 # graphdb/core/config.py
-# Backward-compatible re-export of the domain configuration module.
-# New code should import from graphdb.domain.config directly.
-from graphdb.domain.config import (
+# Backward-compatible shim for external apps that import from graphdb.core.config.
+# New code should import from graphdb.application.core.cfg_config or graphdb.domain.mdl_config.
+from graphdb.application.core.cfg_config import (
     GraphDBConfig,
     GraphDBConfigError,
     EnvironmentConfig,
