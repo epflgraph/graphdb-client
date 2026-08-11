@@ -1,0 +1,37 @@
+{
+    "include": [
+        "graphdb",
+        "scripts",
+        "tests"
+    ],
+    "exclude": [
+        "**/.*",
+        "**/.venv",
+        "**/.venv.*",
+        "**/.venv.graphdb",
+        "**/venv",
+        "**/__pycache__",
+        "**/.pytest_cache",
+        "**/.mypy_cache",
+        "**/.ruff_cache",
+        "**/node_modules",
+        "**/dist",
+        "**/build",
+        "**/data",
+        "**/logs",
+        "**/.archive",
+        "**/.certs",
+        "**/.temp*",
+        "*.log"
+    ],
+    "extraPaths": [
+        "."
+    ],
+    "venvPath": ".",
+    "venv": ".venv.graphdb",
+    "typeCheckingMode": "off",
+    "diagnosticMode": "openFilesOnly",
+    "autoSearchPaths": false,
+    "useLibraryCodeForTypes": false,
+    "indexing": false
+}
