@@ -1,7 +1,7 @@
 from __future__ import annotations
 from typing import Any, Dict, List
 
-from graphdb.application.policies.pol_table_comparison import TableComparisonPolicy
+from graphdb.application.policies.pol_table import TableComparisonPolicy
 from graphdb.application.ports.gateways.prt_adapter_registry import AdapterRegistryPort, EnvironmentPort
 
 

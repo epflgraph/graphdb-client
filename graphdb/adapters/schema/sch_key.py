@@ -1,11 +1,20 @@
 from __future__ import annotations
 
-from typing import Dict, List, Optional
+import datetime
+import time
+from typing import Any, Dict, List, Optional
 
 from sqlalchemy.engine import Engine
 
 from graphdb.adapters.schema.shared import SchemaExecutor
 from graphdb.domain.models.entities.mdl_table import Key
+
+
+# Estimated processing times per operation (in seconds per row)
+PROCESSING_TIMES_PER_ROW = {
+    'apply_datatypes': 0.001,
+    'apply_keys': 0.001,
+}
 
 
 class KeySchemaAdapter:
@@ -14,9 +23,10 @@ class KeySchemaAdapter:
     Executes the same SQL as graphdb.application.core.app_graphdb.GraphDB.
     """
 
-    def __init__(self, engine: Engine) -> None:
+    def __init__(self, engine: Engine, graphdb: Any = None) -> None:
         self._exec = SchemaExecutor(engine)
         self.engine = engine
+        self._graphdb = graphdb
 
     def key_exists(self, schema_name: str, table_name: str, key_name: str) -> bool:
         query = (
@@ -83,3 +93,72 @@ class KeySchemaAdapter:
             query = query[:-1]
 
         self._exec.execute_ddl(query)
+
+    #-------------------------------------------#
+    # Method: Apply keys to a table (from JSON) #
+    #-------------------------------------------#
+    def apply_keys(self, schema_name, table_name, keys_json, display_elapsed_time=False, estimated_num_rows=False):
+
+        # Display processing time estimate
+        if estimated_num_rows:
+
+            # Display the current time
+            print(f"Current time: {datetime.datetime.now().strftime('%H:%M')}")
+
+            # Calculate the estimated processing time
+            processing_time = PROCESSING_TIMES_PER_ROW['apply_keys'] * estimated_num_rows
+
+            # Display the estimated processing time in # hours, # min and # sec format
+            print(f"Estimated processing time: {int(processing_time/3600)} hour(s), {int((processing_time%3600)/60)} minute(s), {int(processing_time%60)} second(s)")
+
+        # Initialize the timer
+        start_time = time.time()
+
+        # Get the column names
+        if self._graphdb is not None and hasattr(self._graphdb, 'get_column_names'):
+            column_names = self._graphdb.get_column_names(schema_name=schema_name, table_name=table_name)
+        else:
+            from graphdb.adapters.schema.sch_column import ColumnSchemaAdapter
+            column_names = ColumnSchemaAdapter(self.engine).get_column_names(schema_name, table_name)
+
+        # Build composite primary key
+        composite_primary_key = ''
+        for column_name in keys_json:
+            if keys_json[column_name] == 'PRIMARY KEY' and column_name in column_names:
+                composite_primary_key += column_name + ', '
+
+        # Remove the trailing comma and space
+        if composite_primary_key.endswith(', '):
+            composite_primary_key = composite_primary_key[:-2]
+
+        # Build the sql query for applying keys
+        sql_query = f"ALTER TABLE {schema_name}.{table_name} "
+
+        # Append the composite primary key
+        if composite_primary_key:
+            sql_query += f"ADD PRIMARY KEY ({composite_primary_key}), "
+            sql_query += f"ADD UNIQUE KEY uid ({composite_primary_key}), "
+
+        # Check if primary key already defined
+        if self.has_primary_key(schema_name=schema_name, table_name=table_name):
+            print(f"Table {schema_name}.{table_name} already has a primary key defined.")
+            return
+
+        # Loop over the remaining keys
+        for column_name in keys_json:
+            if column_name in column_names:
+                sql_query += f"ADD {keys_json[column_name].replace('PRIMARY KEY', 'KEY')} {column_name} ({column_name}), "
+
+        # Remove the trailing comma and space
+        if sql_query.endswith(', '):
+            sql_query = sql_query[:-2]
+
+        # Execute the query
+        if self._graphdb is not None:
+            self._graphdb.execute_query_in_shell(query=sql_query)
+        else:
+            self._exec.execute_ddl(sql_query)
+
+        # Display the elapsed time
+        if display_elapsed_time:
+            print(f"Elapsed time: {time.time() - start_time:.2f} seconds")

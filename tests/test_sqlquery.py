@@ -2,7 +2,7 @@ import unittest
 
 from rich.console import Console
 
-from graphdb.common.mdl_sqlquery import SQLQuery, print_sql
+from graphdb.utils.mdl_sqlquery import SQLQuery, print_sql
 
 
 class TestSQLQuery(unittest.TestCase):

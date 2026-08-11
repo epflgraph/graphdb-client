@@ -7,9 +7,43 @@ import subprocess
 from pathlib import Path
 from typing import Optional
 
-from graphdb.common.cmn_command_builder import build_mysql_base_command
 from graphdb.domain.err_exceptions import QueryExecutionError
 from graphdb.domain.mdl_connection import ConnectionParams
+
+
+import os
+import shlex
+from typing import Any, Dict, Optional, Set, Tuple
+
+from graphdb.utils.cmn_ssl_options import (
+    build_ssl_cli_flags,
+    detect_cli_option_names,
+)
+from graphdb.domain.mdl_connection import ConnectionParams
+
+
+def _build_mysql_base_command(params: ConnectionParams) -> tuple[list[str], Dict[str, str]]:
+    client_bin = params.client_bin or "mysql"
+    supported_options = detect_cli_option_names(shlex.split(client_bin))
+    ssl_flags = build_ssl_cli_flags(
+        params.ssl,
+        supported_options=supported_options,
+        engine_flavor=params.engine_flavor,
+    )
+
+    cmd = shlex.split(client_bin) + [
+        "-u", params.username,
+        "-h", params.host_address,
+        "-P", str(params.port),
+    ]
+    if ssl_flags:
+        cmd += ssl_flags
+
+    env = os.environ.copy()
+    env["MYSQL_PWD"] = str(params.password)
+    return cmd, env
+
+
 
 
 class BaseDBClientGateway:
@@ -18,7 +52,7 @@ class BaseDBClientGateway:
     def __init__(self, params: ConnectionParams, env_name: str = "default") -> None:
         self.params = params
         self.env_name = env_name
-        self.base_command, self.env = build_mysql_base_command(params)
+        self.base_command, self.env = _build_mysql_base_command(params)
 
     def execute_query(
         self,

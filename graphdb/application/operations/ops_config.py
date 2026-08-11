@@ -1,7 +1,7 @@
 from __future__ import annotations
 
 from typing import Any, Dict
-from graphdb.application.policies.pol_config_redaction import ConfigRedactionPolicy
+from graphdb.application.policies.pol_config import ConfigRedactionPolicy
 from graphdb.domain.mdl_config import GraphDBConfig
 
 

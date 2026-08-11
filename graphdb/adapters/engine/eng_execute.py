@@ -10,17 +10,12 @@ from typing import Any, Dict, Optional
 import pandas as pd
 from loguru import logger as sysmsg
 from sqlalchemy import text
+from sqlalchemy.dialects.mysql import dialect as MySQLDialect
 from sqlalchemy.exc import DataError, IntegrityError, SQLAlchemyError
 from tqdm import tqdm
 
-from graphdb.common.mdl_sqlquery import print_sql
-
-
-def print_dataframe(df, title):
-    """Pretty-print a pandas DataFrame."""
-    from tabulate import tabulate
-    print(f"\n{title}\n")
-    print(tabulate(df, headers='keys', tablefmt='grid', showindex=False))
+from graphdb.adapters.display.dis_print import print_colour
+from graphdb.utils.mdl_sqlquery import print_dataframe, print_sql
 
 
 class EngineExecuteAdapter:
@@ -28,6 +23,27 @@ class EngineExecuteAdapter:
 
     def __init__(self, graphdb: Any) -> None:
         self._graphdb = graphdb
+
+    @staticmethod
+    def _q(name: str) -> str:
+        """Backtick-quote a single SQL identifier, escaping embedded backticks."""
+        return f"`{name.replace('`', '``')}`"
+
+    @staticmethod
+    def _qt(schema_name: str, table_name: str) -> str:
+        """Backtick-quote a schema-qualified table name."""
+        return f"`{schema_name}`.`{table_name}`"
+
+    @staticmethod
+    def _normalize_sql_value(value):
+        if value is None:
+            return None
+        if isinstance(value, str):
+            stripped = value.strip()
+            if stripped in {"NULL", "null", "NaN", "nan"}:
+                return None
+            return value
+        return value
 
     def execute_query(self, engine_name, query, schema_name=None, params=None, commit=False, return_exception=False, verbose=False, query_id=None):
 
@@ -76,7 +92,7 @@ class EngineExecuteAdapter:
         connection = self._graphdb.engine[engine_name].connect()
         try:
             if schema_name:
-                connection.execute(text(f"USE {schema_name}"))
+                connection.execute(text(f"USE {self._q(schema_name)}"))
 
             exec_conn = connection.execution_options(stream_results=True)
             result = exec_conn.execute(text(query), parameters=params)
@@ -109,6 +125,149 @@ class EngineExecuteAdapter:
                 connection.close()
             except Exception:
                 pass
+
+    #----------------------------------------------------#
+    # Method: Execute a single-row upsert safely         #
+    #----------------------------------------------------#
+    def execute_upsert_row(self, engine_name, schema_name, table_name, key_column_names, key_column_values, upd_column_names, upd_column_values, actions=()):
+        """
+        Possible actions: 'print', 'eval', 'commit'
+        """
+
+        # Generate the full table name
+        t = f'{schema_name}.{table_name}'
+
+        # Get the number of columns to update and create the dictionary with normalized values
+        num_upd_columns = len(upd_column_names)
+        num_key_columns = len(key_column_names)
+
+        sql_params = {
+            key_column_names[k]: self._normalize_sql_value(key_column_values[k])
+            for k in range(num_key_columns)
+        }
+        sql_params.update({
+            upd_column_names[u]: self._normalize_sql_value(upd_column_values[u])
+            for u in range(num_upd_columns)
+        })
+
+        # Initialise test results dictionary
+        eval_results = None
+
+        # Evaluate changes to be made
+        if 'eval' in actions:
+
+            # Define the colour map
+            colour_map = {
+                'no change'     : 'green',
+                'new value'     : 'cyan',
+                'set to null'   : 'red',
+                'key exists'    : 'green',
+                'key is new'    : 'cyan'
+            }
+
+            # Generate SELECT statement
+            if num_upd_columns > 0:
+                if_statements = []
+                for k in range(num_upd_columns):
+                    if isinstance(upd_column_values[k], float):
+                        if_statements.append(
+                            f'IF('
+                                f'ABS({upd_column_names[k]} - :{upd_column_names[k]})<1e-6 '
+                                    f'OR (:{upd_column_names[k]} IS NULL AND {upd_column_names[k]} IS NULL), '
+                                f'"no change", '
+                                f'IF(:{upd_column_names[k]} IS NULL AND {upd_column_names[k]} IS NOT NULL, "set to null", "new value")'
+                            f') AS TEST_{upd_column_names[k]}'
+                        )
+                    else:
+                        if_statements.append(
+                            f'IF('
+                                f'({upd_column_names[k]} = :{upd_column_names[k]}) '
+                                    f'OR (:{upd_column_names[k]} IS NULL AND {upd_column_names[k]} IS NULL), '
+                                f'"no change", '
+                                f'IF(:{upd_column_names[k]} IS NULL AND {upd_column_names[k]} IS NOT NULL, "set to null", "new value")'
+                            f') AS TEST_{upd_column_names[k]}'
+                        )
+                sql_select_statement = ', '.join(if_statements)
+            else:
+                sql_select_statement = '*'
+
+            # Generate the SQL query for evaluation
+            sql_query_eval = f"""
+                SELECT {sql_select_statement}
+                  FROM {t}
+                 WHERE ({', '.join(key_column_names)}) = (:{', :'.join(key_column_names)});
+            """
+
+            # Print the SQL query
+            if 'print' in actions:
+                print(sql_query_eval)
+
+            # Execute the query
+            out = self.execute_query(engine_name=engine_name, query=sql_query_eval, params=sql_params)
+
+            # Build up the test results dictionary
+            print_colour(f'\nChanges on table {t}:', style='bold')
+            eval_result = 'key exists' if len(out) > 0 else 'key is new'
+            eval_results = [{'column': 'primary_key', 'result': eval_result}]
+            print(f"primary_key {'.'*(48-len('primary_key'))} ", end="", flush=True)
+            print_colour(eval_result, colour=colour_map[eval_result])
+            if len(out) > 0:
+                for k in range(num_upd_columns):
+                    eval_result = out[0][k]
+                    eval_results.append({'column': upd_column_names[k], 'result': eval_result})
+                    print(f"{upd_column_names[k]} {'.'*(48-len(upd_column_names[k]))} ", end="", flush=True)
+                    print_colour(eval_result, colour=colour_map[eval_result])
+
+        # Generate the SQL query for commit
+        if num_upd_columns > 0:
+            sql_query_commit = f"""
+                INSERT INTO {t}
+                    ({', '.join(key_column_names)}, {', '.join(upd_column_names)})
+                SELECT {', '.join(key_column_names)}, {', '.join(upd_column_names)}
+                FROM (
+                    SELECT
+                        {', '.join([f':{key_column_names[k]} AS {key_column_names[k]}' for k in range(num_key_columns)])},
+                        {', '.join([f':{upd_column_names[u]} AS {upd_column_names[u]}' for u in range(num_upd_columns)])}
+                ) AS d
+                ON DUPLICATE KEY UPDATE
+                    record_updated_date = IF(
+                        {' OR '.join([f"COALESCE({t}.{c}, '__null__') != COALESCE(d.{c}, '__null__')" for c in upd_column_names])},
+                        CURRENT_TIMESTAMP,
+                        {t}.record_updated_date
+                    ),
+                    {', '.join(
+                        [f"{c} = IF(COALESCE({t}.{c}, '__null__') != COALESCE(d.{c}, '__null__'), d.{c}, {t}.{c})" for c in upd_column_names]
+                    )};"""
+        else:
+            sql_query_commit = f"""
+                INSERT IGNORE INTO {t}
+                    ({', '.join(key_column_names)})
+                SELECT
+                    {', '.join([f':{key_column_names[k]} AS {key_column_names[k]}' for k in range(num_key_columns)])};"""
+
+        # Print the SQL query
+        if 'print' in actions:
+            stmt = text(sql_query_commit).bindparams(**sql_params)
+            print(stmt.compile(
+                dialect=MySQLDialect(),
+                compile_kwargs={"literal_binds": True}
+            ))
+
+        # Execute commit
+        if 'commit' in actions:
+            out = self.execute_query(engine_name=engine_name, query=sql_query_commit, params=sql_params, commit=True, return_exception=True)
+            if not type(out) is list:
+                error_type, error_msg, dbapi_code = out
+                if dbapi_code==1062: # Duplicate entry
+                    sysmsg.warning(f'Duplicate entry error when inserting into {t} with keys {sql_params}. Continuing ...')
+                else:
+                    sysmsg.critical(f'Error when inserting into {t} with keys {sql_params}. Exiting ...')
+                    print('Error details:')
+                    print(f'{error_type}: {error_msg} (DBAPI code: {dbapi_code})')
+                    exit()
+
+        # Return the test results
+        return eval_results
 
     #------------------------------------------------------------------#
     # Method: Executes/Evaluates a query using ON DUPLICATE KEY UPDATE #

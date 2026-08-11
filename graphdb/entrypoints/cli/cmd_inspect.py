@@ -1,7 +1,7 @@
 # graphdb/cli/commands/inspect.py
 import json
 
-from graphdb.common.mdl_sqlquery import SQLQuery
+from graphdb.utils.mdl_sqlquery import SQLQuery
 
 
 def cmd_inspect(args):

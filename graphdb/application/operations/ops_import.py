@@ -5,7 +5,7 @@ from pathlib import Path
 from loguru import logger as sysmsg
 from tqdm import tqdm
 
-from graphdb.application.policies.pol_ddl_import import DDLImportPolicy
+from graphdb.application.policies.pol_ddl import DDLImportPolicy
 from graphdb.application.ports.gateways.prt_adapter_registry import AdapterRegistryPort
 from graphdb.application.ports.gateways.prt_import_restore import ImportRestorePort
 

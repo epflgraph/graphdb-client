@@ -70,8 +70,8 @@ class EnvironmentGateway:
         self._database = DatabaseSchemaAdapter(self._engine)
         self._table = TableSchemaAdapter(self._engine)
         self._view = ViewSchemaAdapter(self._engine)
-        self._column = ColumnSchemaAdapter(self._engine)
-        self._key = KeySchemaAdapter(self._engine)
+        self._column = ColumnSchemaAdapter(self._engine, graphdb=self)
+        self._key = KeySchemaAdapter(self._engine, graphdb=self)
         self._mysql_client = BaseDBClientGateway(params, env_name)
         self._dump_client = MySQLDumpBinaryGateway(params, env_name)
         self._filesystem = filesystem or FilesystemGateway()
@@ -121,6 +121,10 @@ class EnvironmentGateway:
         query_id: Optional[str] = None,
     ) -> None:
         self._mysql_client.execute_query(query, database=database, query_id=query_id)
+
+    # Alias used by migrated schema adapters that expect GraphDB-style naming.
+    def execute_query_in_shell(self, query: str, database: Optional[str] = None, query_id: Optional[str] = None) -> None:
+        self.execute_in_shell(query=query, database=database, query_id=query_id)
 
     def execute_from_file(
         self,

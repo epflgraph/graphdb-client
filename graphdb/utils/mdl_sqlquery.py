@@ -372,3 +372,10 @@ def print_sql(sql: str, *, params: Any = None, elapsed_ms: float | None = None, 
         theme=theme,
         word_wrap=word_wrap,
     ).print(console=console)
+
+
+def print_dataframe(df, title):
+    """Pretty-print a pandas DataFrame using tabulate."""
+    from tabulate import tabulate
+    print(f"\n{title}\n")
+    print(tabulate(df, headers=df.columns if hasattr(df, "columns") else "keys", tablefmt="grid", showindex=False))

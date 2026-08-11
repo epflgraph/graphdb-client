@@ -2,12 +2,54 @@ from __future__ import annotations
 
 import gzip
 import subprocess
+import os
+import shlex
 from pathlib import Path
 from typing import Optional
+from typing import Any, Dict, Optional, Set, Tuple
 
-from graphdb.common.cmn_command_builder import build_mysqldump_base_command
 from graphdb.domain.err_exceptions import ExportError
 from graphdb.domain.mdl_connection import ConnectionParams
+
+from graphdb.utils.cmn_ssl_options import (
+    build_ssl_cli_flags,
+    detect_cli_option_names,
+)
+from graphdb.domain.mdl_connection import ConnectionParams
+
+
+def _build_mysqldump_base_command(params: ConnectionParams) -> tuple[list[str], Dict[str, str], Set[str]]:
+    dump_bin = params.dump_bin or "mysqldump"
+    supported_options = detect_cli_option_names(shlex.split(dump_bin))
+    ssl_flags = build_ssl_cli_flags(
+        params.ssl,
+        supported_options=supported_options,
+        engine_flavor=params.engine_flavor,
+    )
+
+    cmd = shlex.split(dump_bin) + [
+        "-u", params.username,
+        "-h", params.host_address,
+        "-P", str(params.port),
+    ]
+    if ssl_flags:
+        cmd += ssl_flags
+
+    cmd += [
+        "-v",
+        "--no-create-db",
+        "--no-create-info",
+        "--skip-lock-tables",
+        "--single-transaction",
+    ]
+
+    if "column-statistics" in supported_options:
+        cmd += ["--column-statistics=0"]
+
+    env = os.environ.copy()
+    env["MYSQL_PWD"] = str(params.password)
+    return cmd, env, supported_options
+
 
 
 def _clean_dump_stderr(stderr_text: Optional[str]) -> str:
@@ -22,7 +64,7 @@ class MySQLDumpBinaryGateway:
     def __init__(self, params: ConnectionParams, env_name: str = "default") -> None:
         self.params = params
         self.env_name = env_name
-        self.base_command, self.env, self.supported_options = build_mysqldump_base_command(params)
+        self.base_command, self.env, self.supported_options = _build_mysqldump_base_command(params)
 
     def _run(self, cmd: list[str], capture_stdout: bool = True) -> subprocess.CompletedProcess:
         result = subprocess.run(
