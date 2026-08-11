@@ -180,6 +180,14 @@ class EnvironmentGateway:
             schema_name, include_views=include_views, filter_by=filter_by, use_regex=use_regex
         )
 
+    def count_rows_in_table(
+        self, schema_name: str, table_name: str, where_clause: Optional[str] = None
+    ) -> int:
+        return self._table.count_rows_in_table(schema_name, table_name, where_clause=where_clause)
+
+    def get_table_size(self, schema_name: str, table_name: str) -> int:
+        return self._table.get_table_size(schema_name, table_name)
+
     def get_create_table(self, schema_name: str, table_name: str) -> str:
         return self._table.get_create_table(schema_name, table_name)
 
@@ -222,6 +230,12 @@ class EnvironmentGateway:
             self._key.drop_keys(target_schema_name, target_table_name)
 
     # View operations
+    def create_view(self, schema_name: str, view_name: str, query: str) -> None:
+        self._view.create_view(schema_name, view_name, query)
+
+    def drop_view(self, schema_name: str, view_name: str) -> None:
+        self._view.drop_view(schema_name, view_name)
+
     def get_views(self, schema_name: str) -> List[str]:
         return self._view.get_views(schema_name)
 
@@ -234,6 +248,9 @@ class EnvironmentGateway:
     # Column operations
     def column_exists(self, schema_name: str, table_name: str, column_name: str) -> bool:
         return self._column.column_exists(schema_name, table_name, column_name)
+
+    def has_column(self, schema_name: str, table_name: str, column_name: str) -> bool:
+        return self._column.has_column(schema_name, table_name, column_name)
 
     def get_column_names(self, schema_name: str, table_name: str) -> List[str]:
         return self._column.get_column_names(schema_name, table_name)

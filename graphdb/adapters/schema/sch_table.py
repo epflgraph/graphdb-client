@@ -28,6 +28,17 @@ class TableSchemaAdapter:
             query += " AND TABLE_TYPE = 'BASE TABLE'"
         return len(self._exec.execute(query)) > 0
 
+    def count_rows_in_table(
+        self, schema_name: str, table_name: str, where_clause: Optional[str] = None
+    ) -> int:
+        query = f"SELECT COUNT(*) FROM {schema_name}.{table_name}"
+        if where_clause:
+            query += f" WHERE {where_clause}"
+        return int(self._exec.execute(query, schema_name=schema_name)[0][0])
+
+    def get_table_size(self, schema_name: str, table_name: str) -> int:
+        return int(self._exec.execute(f"SELECT COUNT(*) FROM {schema_name}.{table_name}", schema_name=schema_name)[0][0])
+
     def get_tables(
         self,
         schema_name: str,

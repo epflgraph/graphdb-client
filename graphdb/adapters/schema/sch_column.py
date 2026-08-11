@@ -26,6 +26,10 @@ class ColumnSchemaAdapter:
         )
         return len(self._exec.execute(query)) > 0
 
+    def has_column(self, schema_name: str, table_name: str, column_name: str) -> bool:
+        """Alias for column_exists; matches legacy GraphDB naming."""
+        return self.column_exists(schema_name, table_name, column_name)
+
     def get_column_names(self, schema_name: str, table_name: str) -> List[str]:
         query = f"SHOW COLUMNS FROM {schema_name}.{table_name}"
         return [row[0] for row in self._exec.execute(query) if row is not None]

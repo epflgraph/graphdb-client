@@ -17,6 +17,13 @@ class ViewSchemaAdapter:
 
     def __init__(self, engine: Engine) -> None:
         self._exec = SchemaExecutor(engine)
+        self.engine = engine
+
+    def create_view(self, schema_name: str, view_name: str, query: str) -> None:
+        self._exec.execute_ddl(f"CREATE OR REPLACE VIEW {schema_name}.{view_name} AS {query}")
+
+    def drop_view(self, schema_name: str, view_name: str) -> None:
+        self._exec.execute_ddl(f"DROP VIEW IF EXISTS {schema_name}.{view_name}")
 
     def get_views(self, schema_name: str) -> List[str]:
         query = (
