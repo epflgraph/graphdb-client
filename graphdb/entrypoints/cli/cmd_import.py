@@ -1,11 +1,10 @@
 # graphdb/cli/commands/import_.py
-from graphdb.application.operations.ops_import import ImportOperations
 
 
 def cmd_import(args):
     print("🖥️  ~ GraphDB client CLI. Import database from local folder.")
 
-    service = ImportOperations(args.ctx.registry)
+    service = args.ctx.container.import_ops
     t = args.table_name is not None
     c = args.include_create_tables
     d = args.include_data

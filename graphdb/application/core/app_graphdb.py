@@ -13,7 +13,6 @@ from tabulate import tabulate
 import sys, os, re, subprocess, json, datetime, hashlib, random, glob, time, rich, ssl, shlex, shutil, gzip, tempfile, types
 from graphdb.application.core.cfg_config import GraphDBConfig, GraphDBConfigError
 from graphdb.adapters.rendering.rdr_sqlquery import print_sql
-from graphdb.lib.cmn_table import get_table_type_from_name
 
 # New architecture imports (incremental migration)
 from graphdb.adapters.environments import Environments

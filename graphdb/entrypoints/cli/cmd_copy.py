@@ -1,11 +1,10 @@
 # graphdb/cli/commands/copy.py
-from graphdb.application.operations.ops_copy import CopyOperations
 
 
 def cmd_copy(args):
     print("🖥️  ~ GraphDB client CLI. Copy database or tables across servers.")
 
-    service = CopyOperations(registry=args.ctx.registry)
+    service = args.ctx.container.copy_ops
 
     if args.table_name:
         service.copy_table(

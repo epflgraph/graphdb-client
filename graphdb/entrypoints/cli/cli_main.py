@@ -7,10 +7,9 @@ from typing import Optional
 
 import typer
 
-from graphdb.adapters.environments import Environments
-from graphdb.application.operations.ops_config import ConfigOperations
 from graphdb.domain.models.mdl_config import GraphDBConfig
 from graphdb.entrypoints.cli.cli_context import CLIContext
+from graphdb.entrypoints.cli.container import Container
 from graphdb.entrypoints.cli import (
     cmd_config,
     cmd_compare,
@@ -33,14 +32,13 @@ class _LazyAppState:
     """Container for lazily-initialized CLI dependencies."""
 
     def __init__(self) -> None:
-        self._registry: Optional[Environments] = None
+        self._container: Optional[Container] = None
 
     @property
-    def registry(self) -> Environments:
-        if self._registry is None:
-            config = GraphDBConfig.from_default_file()
-            self._registry = Environments(config)
-        return self._registry
+    def container(self) -> Container:
+        if self._container is None:
+            self._container = Container(GraphDBConfig.from_default_file())
+        return self._container
 
 
 @app.callback()
@@ -50,7 +48,7 @@ def _main_callback(ctx: typer.Context) -> None:
 
 
 def _cli_context(ctx: typer.Context) -> CLIContext:
-    return CLIContext(registry=ctx.obj.registry)
+    return CLIContext(container=ctx.obj.container)
 
 
 # -----------------------------------------------------------------------------

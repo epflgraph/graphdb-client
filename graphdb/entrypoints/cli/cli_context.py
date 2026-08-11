@@ -1,12 +1,14 @@
 # graphdb/cli/context.py
-# Shared context for CLI commands, exposing application services.
+# Shared context for CLI commands, exposing the composition root.
+from __future__ import annotations
+
 from dataclasses import dataclass
 from typing import TYPE_CHECKING
 
 if TYPE_CHECKING:
-    from graphdb.adapters.environments import Environments
+    from graphdb.entrypoints.cli.container import Container
 
 
 @dataclass
 class CLIContext:
-    registry: "Environments"
+    container: "Container"

@@ -8,7 +8,52 @@ import pandas as pd
 from sqlalchemy import text
 from tqdm import tqdm
 
-from graphdb.lib.cmn_table import get_table_type_from_name
+
+
+def _get_table_type_from_name(table_name: str) -> str | None:
+    """Infer the semantic table type from its physical name."""
+    import re
+
+    match_gen_from_to_edges = re.findall(r"Edges_N_[^_]*_[^_]*_N_[^_]*_[^_]*_T_(GBC|AS)$", table_name)
+    match_obj_to_obj_edges = re.findall(r"Edges_N_[^_]*_N_(?!Concept)[^_]*_T_[^_]*$", table_name)
+    match_obj_to_concept_edges = re.findall(r"Edges_N_[^_]*_N_Concept_T_[^_]*$", table_name)
+    match_data_object = re.findall(r"Data_N_Object_T_[^_]*(_COPY)?$", table_name)
+    match_data_obj_to_obj = re.findall(r"Data_N_Object_N_Object_T_[^_]*$", table_name)
+    match_doc_index = re.findall(r"Index_D_[^_]*(_COPY)?$", table_name)
+    match_link_index = re.findall(r"Index_D_[^_]*_L_[^_]*_T_[^_]*(_Search)?(_COPY)?$", table_name)
+    match_stats_object = re.findall(r"Stats_N_Object_T_[^_]*$", table_name)
+    match_stats_obj_to_obj = re.findall(r"Stats_N_Object_N_Object_T_[^_]*$", table_name)
+    match_buildup_docs = re.findall(r"^IndexBuildup_Fields_Docs_[^_]*", table_name)
+    match_buildup_links = re.findall(r"^IndexBuildup_Fields_Links_ParentChild_[^_]*_[^_]*", table_name)
+    match_scores_matrix = re.findall(r"Edges_N_Object_N_Object_T_ScoresMatrix_AS$", table_name)
+
+    if match_gen_from_to_edges:
+        return "from_to_edges"
+    elif match_obj_to_obj_edges:
+        return "object_to_object"
+    elif match_obj_to_concept_edges:
+        return "object_to_concept"
+    elif match_data_object:
+        if "PageProfile" in table_name:
+            return "doc_profile"
+        return "object"
+    elif match_data_obj_to_obj:
+        return "object_to_object"
+    elif match_doc_index:
+        return "doc_index"
+    elif match_link_index:
+        return "link_index"
+    elif match_stats_object:
+        return "object"
+    elif match_stats_obj_to_obj:
+        return "object_to_object"
+    elif match_buildup_docs:
+        return "doc_index"
+    elif match_buildup_links:
+        return "link_index"
+    elif match_scores_matrix:
+        return "object_to_object"
+    return None
 
 
 class DataCompareAdapter:
@@ -717,7 +762,7 @@ class DataCompareAdapter:
             return
 
         # Detect table type
-        table_type = get_table_type_from_name(source_table_name)
+        table_type = _get_table_type_from_name(source_table_name)
         if table_type == 'doc_profile':
             pass
 

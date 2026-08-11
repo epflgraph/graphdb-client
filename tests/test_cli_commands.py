@@ -11,6 +11,8 @@ from graphdb.entrypoints.cli.cmd_copy import cmd_copy
 from graphdb.entrypoints.cli.cmd_export import cmd_export
 from graphdb.entrypoints.cli.cmd_import import cmd_import
 from graphdb.entrypoints.cli.cmd_test import cmd_test
+from graphdb.entrypoints.cli.cli_context import CLIContext
+from graphdb.entrypoints.cli.container import Container
 from tests.fakes import (
     FakeEnvironments,
     FakeDatabaseAdapter,
@@ -23,6 +25,10 @@ from tests.fakes import (
 
 def _make_args(**kwargs):
     return argparse.Namespace(**kwargs)
+
+
+def _make_container(registry=None, config=None):
+    return Container(config, environments=registry)
 
 
 class TestCliConfigCommand(unittest.TestCase):
@@ -57,7 +63,7 @@ class TestCliConfigCommand(unittest.TestCase):
         try:
             mock_default_path.return_value = path
             mock_from_default.return_value = cfg
-            args = _make_args(ctx=None)
+            args = _make_args(ctx=CLIContext(container=_make_container(config=cfg)))
             cmd_config(args)
             data = mock_print_json.call_args.kwargs["data"]
             self.assertEqual(data["environments"]["test"]["password"], "***REDACTED***")
@@ -70,7 +76,7 @@ class TestCliTestCommand(unittest.TestCase):
         registry = FakeEnvironments({
             "local": FakeEnvironmentAdapter(database=FakeDatabaseAdapter()),
         })
-        args = _make_args(ctx=_make_args(registry=registry), env="local")
+        args = _make_args(ctx=CLIContext(container=_make_container(registry=registry)), env="local")
         with patch("builtins.print") as mock_print:
             cmd_test(args)
             output = " ".join(str(call.args[0]) for call in mock_print.call_args_list)
@@ -85,7 +91,7 @@ class TestCliExportCommand(unittest.TestCase):
             "local": FakeEnvironmentAdapter(schema=schema, dump=dump, filesystem=FakeFilesystemAdapter()),
         })
         args = _make_args(
-            ctx=_make_args(registry=registry),
+            ctx=CLIContext(container=_make_container(registry=registry)),
             env="local",
             schema_name="mydb",
             output_folder="/tmp/out",
@@ -110,7 +116,7 @@ class TestCliImportCommand(unittest.TestCase):
             "local": FakeEnvironmentAdapter(database=db, schema=schema, filesystem=fs),
         })
         args = _make_args(
-            ctx=_make_args(registry=registry),
+            ctx=CLIContext(container=_make_container(registry=registry)),
             env="local",
             schema_name="mydb",
             input_folder="/tmp/in",
@@ -137,7 +143,7 @@ class TestCliCopyCommand(unittest.TestCase):
             "dst": FakeEnvironmentAdapter(database=target_db, schema=target_schema, filesystem=fs),
         })
         args = _make_args(
-            ctx=_make_args(registry=registry),
+            ctx=CLIContext(container=_make_container(registry=registry)),
             from_env="src",
             from_schema="src",
             to_env="dst",
@@ -162,7 +168,7 @@ class TestCliCompareCommand(unittest.TestCase):
             "dst": FakeEnvironmentAdapter(database=db, schema=schema),
         })
         args = _make_args(
-            ctx=_make_args(registry=registry),
+            ctx=CLIContext(container=_make_container(registry=registry)),
             from_env="src",
             from_schema="src",
             to_env="dst",

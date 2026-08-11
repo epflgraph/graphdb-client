@@ -1,5 +1,4 @@
 # graphdb/entrypoints/cli/cmd_compare.py
-from graphdb.application.operations.ops_compare import CompareOperations
 
 
 def _fmt_bytes(n):
@@ -54,7 +53,7 @@ def _print_table_result(result):
 def cmd_compare(args):
     print("🖥️  ~ GraphDB client CLI. Compare database or tables across servers.")
 
-    service = CompareOperations(args.ctx.registry)
+    service = args.ctx.container.compare_ops
 
     if args.table_name:
         result = service.compare_tables(

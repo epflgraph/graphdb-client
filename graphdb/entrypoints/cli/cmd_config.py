@@ -30,7 +30,10 @@ def cmd_config(args):
     with raw_path.open("r", encoding="utf-8") as f:
         raw = safe_load(f) or {}
 
-    operations = ConfigOperations(config)
+    if config_path:
+        operations = ConfigOperations(config)
+    else:
+        operations = args.ctx.container.config_ops
     rich.print_json(data=operations.redact_data(raw))
 
     print("🖥️  ~ Done.")
