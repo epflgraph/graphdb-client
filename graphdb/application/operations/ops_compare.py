@@ -239,7 +239,8 @@ class CompareOperations:
         def _secondary_exists_check(engine_name, schema_name, tname):
             sql = f"SHOW FULL TABLES FROM `{schema_name}` LIKE '{tname}';"
             try:
-                raw = self.envs[engine_name].execute_query(engine_name=engine_name, query=sql)
+                env = self.envs.get(engine_name)
+                raw = env.query_executor.execute(sql, schema_name=schema_name)
                 if raw is None:
                     return False
                 if isinstance(raw, dict) and raw.get("rows"):
@@ -252,7 +253,8 @@ class CompareOperations:
 
         def _fetch_side(engine_name, schema_name, tname):
             sql = comparison_sql_template % (schema_name, tname)
-            raw = self._graphdb.execute_query(engine_name=engine_name, query=sql)
+            env = self.envs.get(engine_name)
+            raw = env.query_executor.execute(sql, schema_name=schema_name)
             row = _first_row_as_dict(raw, columns=expected_cols)
 
             if not raw:
@@ -268,7 +270,8 @@ class CompareOperations:
 
         def _exact_count(engine_name, schema_name, tname):
             sql = f"SELECT COUNT(*) AS cnt FROM `{schema_name}`.`{tname}`;"
-            raw = self._graphdb.execute_query(engine_name=engine_name, query=sql)
+            env = self.envs.get(engine_name)
+            raw = env.query_executor.execute(sql, schema_name=schema_name)
             if not raw:
                 return None
             first = raw[0]
@@ -405,14 +408,16 @@ class CompareOperations:
         self.status.trace(f"Target ........... {target_engine_name} / {target_schema_name}")
         self.status.trace(f"'row_count_tolerance' is set to {row_count_tolerance * 100:.0f}%")
 
-        source_tables = set(self._graphdb.get_tables_in_schema(source_engine_name, source_schema_name))
-        target_tables = set(self._graphdb.get_tables_in_schema(target_engine_name, target_schema_name))
+        source_env = self.envs.get(source_engine_name)
+        target_env = self.envs.get(target_engine_name)
+        source_tables = set(source_env.table.get_tables(source_schema_name))
+        target_tables = set(target_env.table.get_tables(target_schema_name))
         all_tables = sorted(source_tables.union(target_tables))
         self.status.info(f"🔢 Found {len(source_tables)} tables in source, {len(target_tables)} tables in target, {len(all_tables)} total unique tables.")
 
         results = {}
         for table_name in all_tables:
-            result = self._graphdb.compare_tables(
+            result = self.compare_tables(
                 source_engine_name, source_schema_name,
                 target_engine_name, target_schema_name,
                 table_name,
@@ -430,7 +435,7 @@ class CompareOperations:
     def get_random_primary_key_set(self, engine_name, schema_name, table_name, sample_size=100, partition_by=None, use_row_id=False):
 
         # Get the primary keys
-        primary_keys = self._graphdb.get_primary_keys(engine_name=engine_name, schema_name=schema_name, table_name=table_name)
+        primary_keys = self.envs.get(engine_name).key.get_primary_keys(schema_name, table_name)
 
         # Using row_id?
         # Yes.
@@ -438,7 +443,8 @@ class CompareOperations:
 
             # Get maximum row_id -> FIX: add min row_id
             # print(f"SELECT MAX(row_id) FROM {schema_name}.{table_name}")
-            max_row_id = self._graphdb.execute_query(engine_name=engine_name, query=f"SELECT COALESCE(MAX(row_id), 0) FROM {schema_name}.{table_name}")
+            env = self.envs.get(engine_name)
+            max_row_id = env.query_executor.execute(f"SELECT COALESCE(MAX(row_id), 0) FROM {schema_name}.{table_name}", schema_name=schema_name)
 
             # Extract (and fix) the max_row_id value
             if type(max_row_id) == list and len(max_row_id) > 0:
@@ -458,7 +464,7 @@ class CompareOperations:
                 return []
 
             # Fetch respective primary keys set
-            random_primary_key_set = self._graphdb.execute_query(engine_name=engine_name, query=f"SELECT {', '.join(primary_keys)} FROM {schema_name}.{table_name} WHERE row_id IN ({', '.join([str(r) for r in random_primary_key_set])});")
+            random_primary_key_set = self.envs.get(engine_name).query_executor.execute(f"SELECT {', '.join(primary_keys)} FROM {schema_name}.{table_name} WHERE row_id IN ({', '.join([str(r) for r in random_primary_key_set])});", schema_name=schema_name)
 
         # No.
         else:
@@ -470,7 +476,7 @@ class CompareOperations:
             if partition_by in primary_keys:
 
                 # Fetch all object types
-                partition_column_possible_vals = [r[0] for r in self._graphdb.execute_query(engine_name=engine_name, query=f"SELECT DISTINCT {partition_by} FROM {schema_name}.{table_name};")]
+                partition_column_possible_vals = [r[0] for r in self.envs.get(engine_name).query_executor.execute(f"SELECT DISTINCT {partition_by} FROM {schema_name}.{table_name};", schema_name=schema_name)]
 
                 # Loop over the object types
                 sql_query_stack = []
@@ -481,7 +487,7 @@ class CompareOperations:
                 sql_query = ' UNION ALL '.join(sql_query_stack)
 
             # Execute the query
-            random_primary_key_set = self._graphdb.execute_query(engine_name=engine_name, query=sql_query)
+            random_primary_key_set = self.envs.get(engine_name).query_executor.execute(sql_query, schema_name=schema_name)
 
         # Return the random sample tuples
         return random_primary_key_set
@@ -494,7 +500,7 @@ class CompareOperations:
         """
 
         # Get the columns that make up the 'uid' unique key
-        keys = self._graphdb.get_keys(engine_name=engine_name, schema_name=schema_name, table_name=table_name)
+        keys = self.envs.get(engine_name).key.get_keys(schema_name, table_name)
         uid_columns = keys.get('uid', [])
         if not uid_columns:
             return []
@@ -509,7 +515,8 @@ class CompareOperations:
         if use_row_id:
 
             # Get maximum row_id
-            max_row_id = self._graphdb.execute_query(engine_name=engine_name, query=f"SELECT COALESCE(MAX(row_id), 0) FROM {q_schema}.{q_table}")
+            env = self.envs.get(engine_name)
+            max_row_id = env.query_executor.execute(f"SELECT COALESCE(MAX(row_id), 0) FROM {q_schema}.{q_table}", schema_name=schema_name)
 
             # Extract (and fix) the max_row_id value
             if type(max_row_id) == list and len(max_row_id) > 0:
@@ -529,7 +536,7 @@ class CompareOperations:
                 return []
 
             # Fetch respective uid tuples set
-            random_uid_set = self._graphdb.execute_query(engine_name=engine_name, query=f"SELECT {', '.join(q_uid_columns)} FROM {q_schema}.{q_table} WHERE row_id IN ({', '.join([str(r) for r in random_row_id_set])});")
+            random_uid_set = self.envs.get(engine_name).query_executor.execute(f"SELECT {', '.join(q_uid_columns)} FROM {q_schema}.{q_table} WHERE row_id IN ({', '.join([str(r) for r in random_row_id_set])});", schema_name=schema_name)
 
         # No.
         else:
@@ -541,7 +548,7 @@ class CompareOperations:
             if partition_by in uid_columns:
 
                 # Fetch all partition values
-                partition_column_possible_vals = [r[0] for r in self._graphdb.execute_query(engine_name=engine_name, query=f"SELECT DISTINCT {self._q(partition_by)} FROM {q_schema}.{q_table};")]
+                partition_column_possible_vals = [r[0] for r in self.envs.get(engine_name).query_executor.execute(f"SELECT DISTINCT {self._q(partition_by)} FROM {q_schema}.{q_table};", schema_name=schema_name)]
 
                 # Loop over the partition values
                 n_partitions = len(partition_column_possible_vals)
@@ -555,7 +562,7 @@ class CompareOperations:
                     sql_query = ' UNION ALL '.join(sql_query_stack)
 
             # Execute the query
-            random_uid_set = self._graphdb.execute_query(engine_name=engine_name, query=sql_query)
+            random_uid_set = self.envs.get(engine_name).query_executor.execute(sql_query, schema_name=schema_name)
 
         # Return the random sample tuples
         return random_uid_set
@@ -566,10 +573,11 @@ class CompareOperations:
     def get_rows_by_primary_key_set(self, engine_name, schema_name, table_name, primary_key_set, return_as_dict=False):
 
         # Get the primary keys
-        primary_keys = self._graphdb.get_primary_keys(engine_name=engine_name, schema_name=schema_name, table_name=table_name)
+        env = self.envs.get(engine_name)
+        primary_keys = env.key.get_primary_keys(schema_name, table_name)
 
         # Get the column names
-        all_columns = self._graphdb.get_column_names(engine_name=engine_name, schema_name=schema_name, table_name=table_name)
+        all_columns = env.column.get_column_names(schema_name, table_name)
 
         # Columns used for data comparison: exclude row_id and primary keys
         data_columns = [c for c in all_columns if c != 'row_id' and c not in primary_keys]
@@ -587,7 +595,7 @@ class CompareOperations:
         sql_query = f"SELECT {', '.join(select_columns)} FROM {schema_name}.{table_name} WHERE ({', '.join(primary_keys)}) IN ({pk_placeholders});"
 
         # Execute the query
-        row_set = self._graphdb.execute_query(engine_name=engine_name, query=sql_query)
+        row_set = self.envs.get(engine_name).query_executor.execute(sql_query, schema_name=schema_name)
 
         # Return as list of tuples
         if not return_as_dict:
@@ -610,13 +618,14 @@ class CompareOperations:
         """
 
         # Get the columns that make up the 'uid' unique key
-        keys = self._graphdb.get_keys(engine_name=engine_name, schema_name=schema_name, table_name=table_name)
+        env = self.envs.get(engine_name)
+        keys = env.key.get_keys(schema_name, table_name)
         uid_columns = keys.get('uid', [])
         if not uid_columns:
             return [] if not return_as_dict else {}
 
         # Get all column names
-        all_columns = self._graphdb.get_column_names(engine_name=engine_name, schema_name=schema_name, table_name=table_name)
+        all_columns = env.column.get_column_names(schema_name, table_name)
 
         # Columns used for data comparison: exclude row_id and uid columns
         data_columns = [c for c in all_columns if c != 'row_id' and c not in uid_columns]
@@ -653,7 +662,7 @@ class CompareOperations:
         sql_query = f"SELECT {', '.join(q_select_columns)} FROM {q_schema}.{q_table} WHERE ({', '.join(q_uid_columns)}) IN ({uid_placeholders});"
 
         # Execute the query
-        row_set = self._graphdb.execute_query(engine_name=engine_name, query=sql_query)
+        row_set = self.envs.get(engine_name).query_executor.execute(sql_query, schema_name=schema_name)
 
         # Return as list of tuples
         if not return_as_dict:
@@ -670,12 +679,12 @@ class CompareOperations:
     def compare_tables_by_random_sampling(self, source_engine_name, source_schema_name, source_table_name, target_engine_name, target_schema_name, target_table_name, sample_size=1024):
 
         # Check if the source table exists
-        if not self.envs[source_engine_name].table_exists(engine_name=source_engine_name, schema_name=source_schema_name, table_name=source_table_name):
+        if not self.envs.get(source_engine_name).table.table_exists(source_schema_name, source_table_name):
             self.status.error(f"🚨 Table {source_schema_name}.{source_table_name} does not exist in '{source_engine_name}'.")
             return
 
         # Check if the target table exists
-        if not self.envs[target_engine_name].table_exists(engine_name=target_engine_name, schema_name=target_schema_name, table_name=target_table_name):
+        if not self.envs.get(target_engine_name).table.table_exists(target_schema_name, target_table_name):
             self.status.error(f"🚨 Table {target_schema_name}.{target_table_name} does not exist in '{target_engine_name}'.")
             return
 
@@ -698,14 +707,14 @@ class CompareOperations:
         # This comparison requires a 'uid' unique key to reliably match rows
         # across schemas, because row_id-based matching is not reliable when
         # auto-increment values differ between environments.
-        source_keys = self.envs[source_engine_name].get_keys(engine_name=source_engine_name, schema_name=source_schema_name, table_name=source_table_name)
+        source_keys = self.envs.get(source_engine_name).key.get_keys(source_schema_name, source_table_name)
         if 'uid' not in source_keys:
             self.status.error(f"🚨 Table {source_schema_name}.{source_table_name} does not have a 'uid' unique key. Cannot compare by uid.")
             return
 
         # Get random uid tuple set
-        random_key_set  = self.envs[source_engine_name].get_random_uid_set(engine_name=source_engine_name, schema_name=source_schema_name, table_name=source_table_name, sample_size=round(sample_size/2), partition_by=None, use_row_id=False)
-        random_key_set += self.envs[target_engine_name].get_random_uid_set(engine_name=target_engine_name, schema_name=target_schema_name, table_name=target_table_name, sample_size=round(sample_size/2), partition_by=None, use_row_id=False)
+        random_key_set  = self.get_random_uid_set(engine_name=source_engine_name, schema_name=source_schema_name, table_name=source_table_name, sample_size=round(sample_size/2), partition_by=None, use_row_id=False)
+        random_key_set += self.get_random_uid_set(engine_name=target_engine_name, schema_name=target_schema_name, table_name=target_table_name, sample_size=round(sample_size/2), partition_by=None, use_row_id=False)
 
         # Return if no rows found
         if len(random_key_set) == 0:
@@ -713,8 +722,8 @@ class CompareOperations:
             return
 
         # Get the rows by uid set (source and target)
-        source_row_set_dict = self.envs[source_engine_name].get_rows_by_uid_set(engine_name=source_engine_name, schema_name=source_schema_name, table_name=source_table_name, uid_set=random_key_set, return_as_dict=True)
-        target_row_set_dict = self.envs[target_engine_name].get_rows_by_uid_set(engine_name=target_engine_name, schema_name=target_schema_name, table_name=target_table_name, uid_set=random_key_set, return_as_dict=True)
+        source_row_set_dict = self.get_rows_by_uid_set(engine_name=source_engine_name, schema_name=source_schema_name, table_name=source_table_name, uid_set=random_key_set, return_as_dict=True)
+        target_row_set_dict = self.get_rows_by_uid_set(engine_name=target_engine_name, schema_name=target_schema_name, table_name=target_table_name, uid_set=random_key_set, return_as_dict=True)
 
         # Get unique set of tuples
         unique_tuples  = list(set(source_row_set_dict.keys()).union(set(target_row_set_dict.keys())))
@@ -1023,9 +1032,9 @@ if __name__ == "__main__":
     ops.compare_tables_by_random_sampling(
         source_engine_name = 'xaas_coresrv',
         source_schema_name = 'graphsearch_test',
-        source_table_name  = 'Index_D_Widget',
+        source_table_name  = 'Data_N_Object_T_PageProfile',
         target_engine_name = 'xaas_prod',
-        target_schema_name = 'graphsearch_prod_2026_08_07',
-        target_table_name  = 'Index_D_Widget',
-        sample_size        = 16
+        target_schema_name = 'graphsearch_prod_2025_11_05',
+        target_table_name  = 'Data_N_Object_T_PageProfile',
+        sample_size        = 1024
     )
