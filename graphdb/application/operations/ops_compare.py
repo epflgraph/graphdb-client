@@ -2,8 +2,10 @@
 from __future__ import annotations
 import random
 from time import time
+from graphdb.domain.models.mdl_config import GraphDBConfig
 from graphdb.application.policies.pol_table import TableComparisonPolicy
 from graphdb.adapters.environments import Environments
+from graphdb.adapters.rendering.rdr_statusmsg import StatusMessageAdapter
 
 #==================#
 # Class definition #
@@ -13,7 +15,7 @@ class CompareOperations:
 
     def __init__(self, envs: Environments) -> None:
         self.envs = envs
-        self.policy = TableComparisonPolicy()
+        self.status = StatusMessageAdapter()
 
     # Helper method to safely quote identifiers (e.g. database, table, column names) with backticks
     def _q(self, name: str) -> str:
@@ -237,7 +239,7 @@ class CompareOperations:
         def _secondary_exists_check(engine_name, schema_name, tname):
             sql = f"SHOW FULL TABLES FROM `{schema_name}` LIKE '{tname}';"
             try:
-                raw = self._graphdb.execute_query(engine_name=engine_name, query=sql)
+                raw = self.envs[engine_name].execute_query(engine_name=engine_name, query=sql)
                 if raw is None:
                     return False
                 if isinstance(raw, dict) and raw.get("rows"):
@@ -283,13 +285,13 @@ class CompareOperations:
         try:
             src_raw, src = _fetch_side(source_engine_name, source_schema_name, table_name)
         except Exception as e:
-            sysmsg.error(f"❌ Source query failed on {source_engine_name}: {e}")
+            self.status.error(f"❌ Source query failed on {source_engine_name}: {e}")
             return {"source": None, "target": None, "table": None, "df": None, "diffs": {"fatal": ["source_query_failed"]}}
 
         try:
             tgt_raw, tgt = _fetch_side(target_engine_name, target_schema_name, table_name)
         except Exception as e:
-            sysmsg.error(f"❌ Target query failed on {target_engine_name}: {e}")
+            self.status.error(f"❌ Target query failed on {target_engine_name}: {e}")
             return {"source": None, "target": None, "table": None, "df": None, "diffs": {"fatal": ["target_query_failed"]}}
 
         if not src or not tgt:
@@ -355,7 +357,7 @@ class CompareOperations:
         df = pd.DataFrame(rows).set_index("metric")[["source", "target", "diff", "result"]]
 
         # -------------------------
-        # Emit soft sysmsg summary
+        # Emit soft self.status summary
         # -------------------------
         n_warn = int((df["result"] == WARN).sum())
         n_err  = int((df["result"] == ERR).sum())
@@ -398,15 +400,15 @@ class CompareOperations:
         Compare all tables in a database across two MySQL servers/schemas.
         Calls compare_tables() for each table and aggregates results.
         """
-        sysmsg.info("🔎 Compare database across MySQL servers.")
-        sysmsg.trace(f"Source ........... {source_engine_name} / {source_schema_name}")
-        sysmsg.trace(f"Target ........... {target_engine_name} / {target_schema_name}")
-        sysmsg.trace(f"'row_count_tolerance' is set to {row_count_tolerance * 100:.0f}%")
+        self.status.info("🔎 Compare database across MySQL servers.")
+        self.status.trace(f"Source ........... {source_engine_name} / {source_schema_name}")
+        self.status.trace(f"Target ........... {target_engine_name} / {target_schema_name}")
+        self.status.trace(f"'row_count_tolerance' is set to {row_count_tolerance * 100:.0f}%")
 
         source_tables = set(self._graphdb.get_tables_in_schema(source_engine_name, source_schema_name))
         target_tables = set(self._graphdb.get_tables_in_schema(target_engine_name, target_schema_name))
         all_tables = sorted(source_tables.union(target_tables))
-        sysmsg.info(f"🔢 Found {len(source_tables)} tables in source, {len(target_tables)} tables in target, {len(all_tables)} total unique tables.")
+        self.status.info(f"🔢 Found {len(source_tables)} tables in source, {len(target_tables)} tables in target, {len(all_tables)} total unique tables.")
 
         results = {}
         for table_name in all_tables:
@@ -419,7 +421,7 @@ class CompareOperations:
             )
             results[table_name] = result
 
-        sysmsg.success("✅ Done comparing database.")
+        self.status.success("✅ Done comparing database.")
         return results
 
     #-----------------------------------------------#
@@ -667,23 +669,20 @@ class CompareOperations:
     #-----------------------------------------------#
     def compare_tables_by_random_sampling(self, source_engine_name, source_schema_name, source_table_name, target_engine_name, target_schema_name, target_table_name, sample_size=1024):
 
-        source_env = self.envs.get(source_engine_name)
-        target_env = self.envs.get(target_engine_name)
-
         # Check if the source table exists
-        if not self._graphdb.table_exists(engine_name=source_engine_name, schema_name=source_schema_name, table_name=source_table_name):
-            sysmsg.error(f"🚨 Table {source_schema_name}.{source_table_name} does not exist in '{source_engine_name}'.")
+        if not self.envs[source_engine_name].table_exists(engine_name=source_engine_name, schema_name=source_schema_name, table_name=source_table_name):
+            self.status.error(f"🚨 Table {source_schema_name}.{source_table_name} does not exist in '{source_engine_name}'.")
             return
 
         # Check if the target table exists
-        if not self._graphdb.table_exists(engine_name=target_engine_name, schema_name=target_schema_name, table_name=target_table_name):
-            sysmsg.error(f"🚨 Table {target_schema_name}.{target_table_name} does not exist in '{target_engine_name}'.")
+        if not self.envs[target_engine_name].table_exists(engine_name=target_engine_name, schema_name=target_schema_name, table_name=target_table_name):
+            self.status.error(f"🚨 Table {target_schema_name}.{target_table_name} does not exist in '{target_engine_name}'.")
             return
 
-        # Detect table type
-        table_type = _get_table_type_from_name(source_table_name)
-        if table_type == 'doc_profile':
-            pass
+        # # Detect table type
+        # table_type = _get_table_type_from_name(source_table_name)
+        # if table_type == 'doc_profile':
+        #     pass
 
         # Print a clear header for this table comparison
         header_label = f" {target_table_name} "
@@ -699,14 +698,14 @@ class CompareOperations:
         # This comparison requires a 'uid' unique key to reliably match rows
         # across schemas, because row_id-based matching is not reliable when
         # auto-increment values differ between environments.
-        source_keys = self._graphdb.get_keys(engine_name=source_engine_name, schema_name=source_schema_name, table_name=source_table_name)
+        source_keys = self.envs[source_engine_name].get_keys(engine_name=source_engine_name, schema_name=source_schema_name, table_name=source_table_name)
         if 'uid' not in source_keys:
-            sysmsg.error(f"🚨 Table {source_schema_name}.{source_table_name} does not have a 'uid' unique key. Cannot compare by uid.")
+            self.status.error(f"🚨 Table {source_schema_name}.{source_table_name} does not have a 'uid' unique key. Cannot compare by uid.")
             return
 
         # Get random uid tuple set
-        random_key_set  = self._graphdb.get_random_uid_set(engine_name=source_engine_name, schema_name=source_schema_name, table_name=source_table_name, sample_size=round(sample_size/2), partition_by=None, use_row_id=False)
-        random_key_set += self._graphdb.get_random_uid_set(engine_name=target_engine_name, schema_name=target_schema_name, table_name=target_table_name, sample_size=round(sample_size/2), partition_by=None, use_row_id=False)
+        random_key_set  = self.envs[source_engine_name].get_random_uid_set(engine_name=source_engine_name, schema_name=source_schema_name, table_name=source_table_name, sample_size=round(sample_size/2), partition_by=None, use_row_id=False)
+        random_key_set += self.envs[target_engine_name].get_random_uid_set(engine_name=target_engine_name, schema_name=target_schema_name, table_name=target_table_name, sample_size=round(sample_size/2), partition_by=None, use_row_id=False)
 
         # Return if no rows found
         if len(random_key_set) == 0:
@@ -714,8 +713,8 @@ class CompareOperations:
             return
 
         # Get the rows by uid set (source and target)
-        source_row_set_dict = self._graphdb.get_rows_by_uid_set(engine_name=source_engine_name, schema_name=source_schema_name, table_name=source_table_name, uid_set=random_key_set, return_as_dict=True)
-        target_row_set_dict = self._graphdb.get_rows_by_uid_set(engine_name=target_engine_name, schema_name=target_schema_name, table_name=target_table_name, uid_set=random_key_set, return_as_dict=True)
+        source_row_set_dict = self.envs[source_engine_name].get_rows_by_uid_set(engine_name=source_engine_name, schema_name=source_schema_name, table_name=source_table_name, uid_set=random_key_set, return_as_dict=True)
+        target_row_set_dict = self.envs[target_engine_name].get_rows_by_uid_set(engine_name=target_engine_name, schema_name=target_schema_name, table_name=target_table_name, uid_set=random_key_set, return_as_dict=True)
 
         # Get unique set of tuples
         unique_tuples  = list(set(source_row_set_dict.keys()).union(set(target_row_set_dict.keys())))
@@ -1011,8 +1010,14 @@ class CompareOperations:
 #======================================#
 if __name__ == "__main__":
 
+    # Load the configuration from the default file
+    config = GraphDBConfig.from_default_file()
+
+    # Initialize the Environments class with the configuration
+    envs = Environments(config)
+
     # Initialize the CompareOperations class
-    ops = CompareOperations()
+    ops = CompareOperations(envs)
 
     # Run with example parameters
     ops.compare_tables_by_random_sampling(
