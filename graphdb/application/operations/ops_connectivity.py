@@ -13,11 +13,11 @@ class ConnectivityOperations:
     def test_one(self, env_name: str) -> bool:
         """Tests database connectivity for a single named environment."""
         adapter = self.registry.get(env_name)
-        return adapter.test()
+        return adapter.query_executor.test()
 
     def test_all(self) -> Dict[str, bool]:
         """Tests database connectivity across all configured environments."""
         return {
-            name: self.registry.get(name).test()
+            name: self.registry.get(name).query_executor.test()
             for name in self.registry.names()
         }

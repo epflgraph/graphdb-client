@@ -87,6 +87,19 @@ class TestCompareOperations(unittest.TestCase):
         statuses = {r["metric"]: r["status"] for r in result["rows"]}
         self.assertEqual(statuses["table_rows"], "OK")
 
+    def test_compare_tables_by_random_sampling_requires_uid_key(self):
+        schema = FakeSchemaAdapter(tables={"src": ["users"], "dst": ["users"]})
+        registry = FakeEnvironments({
+            "src": FakeEnvironmentAdapter(schema=schema),
+            "dst": FakeEnvironmentAdapter(schema=schema),
+        })
+        service = CompareOperations(registry)
+        result = service.compare_tables_by_random_sampling(
+            "src", "src", "dst", "dst", "users", sample_size=10
+        )
+        self.assertIn("error", result)
+        self.assertIn("uid", result["error"])
+
 
 if __name__ == "__main__":
     unittest.main()

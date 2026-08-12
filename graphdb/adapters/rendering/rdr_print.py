@@ -7,7 +7,7 @@ from typing import Any
 import pandas as pd
 from tabulate import tabulate
 
-from graphdb.application.core.cfg_config import GraphDBConfigError
+from graphdb.domain.models.mdl_config import GraphDBConfigError
 
 
 def print_colour(msg, colour='white', background='black', style='normal', display_method=False):
