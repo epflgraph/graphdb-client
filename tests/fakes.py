@@ -3,6 +3,8 @@ from __future__ import annotations
 from pathlib import Path
 from typing import Any, Dict, List, Optional, Tuple, Union
 
+from graphdb.domain.models.mdl_table import Column, Key, Table, View
+
 
 class FakeDatabaseAdapter:
     """In-memory fake for DatabasePort."""
@@ -80,6 +82,14 @@ class FakeSchemaAdapter:
     def table_exists(self, schema_name: str, table_name: str, exclude_views: bool = False) -> bool:
         return table_name in self.tables.get(schema_name, [])
 
+    def count_rows_in_table(
+        self, schema_name: str, table_name: str, where_clause: Optional[str] = None
+    ) -> int:
+        return 0
+
+    def get_table_size(self, schema_name: str, table_name: str) -> int:
+        return 0
+
     def fetch_table_metadata(self, schema_name: str, table_name: str) -> Dict[str, Any]:
         return {
             "table_schema": schema_name,
@@ -126,6 +136,12 @@ class FakeSchemaAdapter:
     def get_column_datatypes(self, schema_name: str, table_name: str) -> Dict[str, str]:
         return {name: "INT" for name in self.get_column_names(schema_name, table_name)}
 
+    def has_column(self, schema_name: str, table_name: str, column_name: str) -> bool:
+        return column_name in self.columns.get(f"{schema_name}.{table_name}", [])
+
+    def get_columns(self, schema_name: str, table_name: str) -> List[Column]:
+        return []
+
     def has_primary_key(self, schema_name: str, table_name: str) -> bool:
         return "PRIMARY" in self.keys.get(f"{schema_name}.{table_name}", {})
 
@@ -135,7 +151,42 @@ class FakeSchemaAdapter:
     def get_keys(self, schema_name: str, table_name: str) -> Dict[str, List[str]]:
         return self.keys.get(f"{schema_name}.{table_name}", {})
 
-    def create_table_like(self, *args, **kwargs) -> None:
+    def get_key_entities(self, schema_name: str, table_name: str) -> List[Key]:
+        return []
+
+    def get_exact_count(self, schema_name: str, table_name: str) -> int:
+        return 0
+
+    def describe_table(
+        self,
+        schema_name: str,
+        table_name: str,
+        *,
+        columns: Optional[List[Column]] = None,
+        keys: Optional[List[Key]] = None,
+    ) -> Table:
+        return Table(
+            name=table_name,
+            engine="InnoDB",
+            collation="utf8mb4_unicode_ci",
+            row_format="Dynamic",
+            columns=columns or [],
+            keys=keys or [],
+            create_sql=self.get_create_table(schema_name, table_name),
+        )
+
+    def describe_view(self, schema_name: str, view_name: str) -> View:
+        return View(name=view_name, create_sql=self.get_create_view(schema_name, view_name))
+
+    def create_table_like(
+        self,
+        source_schema_name: str,
+        source_table_name: str,
+        target_schema_name: str,
+        target_table_name: str,
+        drop_table: bool = False,
+        drop_keys: bool = False,
+    ) -> None:
         pass
 
     def drop_table(self, schema_name: str, table_name: str) -> None:
@@ -176,6 +227,38 @@ class FakeEnvironmentAdapter:
         self.schema = schema or FakeSchemaAdapter()
         self.dump = dump or FakeDumpAdapter()
         self.fs = filesystem or FakeFilesystemAdapter()
+
+    @property
+    def database(self):
+        return self.schema
+
+    @property
+    def table(self):
+        return self.schema
+
+    @property
+    def view(self):
+        return self.schema
+
+    @property
+    def column(self):
+        return self.schema
+
+    @property
+    def key(self):
+        return self.schema
+
+    @property
+    def query_executor(self):
+        return self.db
+
+    @property
+    def mysql_client(self):
+        return self.db
+
+    @property
+    def dump_client(self):
+        return self.dump
 
     def test(self) -> bool:
         return self.db.test()

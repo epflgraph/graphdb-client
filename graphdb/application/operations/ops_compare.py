@@ -32,16 +32,16 @@ class CompareOperations:
         source_meta: EnvironmentGateway = self.registry.get(source_env)
         target_meta: EnvironmentGateway = self.registry.get(target_env)
 
-        if not source_meta.table_exists(source_schema, table_name):
+        if not source_meta.table.table_exists(source_schema, table_name):
             return {"error": f"Table {source_schema}.{table_name} does not exist in '{source_env}'"}
-        if not target_meta.table_exists(target_schema, table_name):
+        if not target_meta.table.table_exists(target_schema, table_name):
             return {"error": f"Table {target_schema}.{table_name} does not exist in '{target_env}'"}
 
-        source_row = source_meta.fetch_table_metadata(source_schema, table_name)
-        target_row = target_meta.fetch_table_metadata(target_schema, table_name)
+        source_row = source_meta.table.fetch_table_metadata(source_schema, table_name)
+        target_row = target_meta.table.fetch_table_metadata(target_schema, table_name)
 
-        source_count = source_meta.get_exact_count(source_schema, table_name)
-        target_count = target_meta.get_exact_count(target_schema, table_name)
+        source_count = source_meta.table.get_exact_count(source_schema, table_name)
+        target_count = target_meta.table.get_exact_count(target_schema, table_name)
         source_row["table_rows"] = source_count
         target_row["table_rows"] = target_count
 
@@ -79,8 +79,8 @@ class CompareOperations:
         source_meta: EnvironmentGateway = self.registry.get(source_env)
         target_meta: EnvironmentGateway = self.registry.get(target_env)
 
-        source_tables = set(source_meta.get_tables(source_schema))
-        target_tables = set(target_meta.get_tables(target_schema))
+        source_tables = set(source_meta.table.get_tables(source_schema))
+        target_tables = set(target_meta.table.get_tables(target_schema))
         all_tables = sorted(source_tables | target_tables)
 
         return [
@@ -131,8 +131,8 @@ class CompareOperations:
             raise RuntimeError("DataCompareAdapter not configured")
         source_meta: EnvironmentGateway = self.registry.get(source_env)
         target_meta: EnvironmentGateway = self.registry.get(target_env)
-        source_tables = set(source_meta.get_tables(source_schema))
-        target_tables = set(target_meta.get_tables(target_schema))
+        source_tables = set(source_meta.table.get_tables(source_schema))
+        target_tables = set(target_meta.table.get_tables(target_schema))
         for table_name in sorted(source_tables | target_tables):
             self.compare_adapter.compare_tables_by_random_sampling(
                 source_engine_name=source_env,

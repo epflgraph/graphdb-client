@@ -29,7 +29,7 @@ class ExportOperations:
         table_folder = Path(output_folder) / schema_name / table_name
         table_folder.mkdir(parents=True, exist_ok=True)
 
-        raw_sql = adapter.get_create_table(schema_name, table_name)
+        raw_sql = adapter.table.get_create_table(schema_name, table_name)
         full_sql, no_keys_sql, create_keys_sql = self.ddl_policy.split_table_keys(raw_sql, table_name)
 
         fs = adapter.filesystem
@@ -51,16 +51,16 @@ class ExportOperations:
         table_folder = Path(output_folder) / schema_name / table_name
         table_folder.mkdir(parents=True, exist_ok=True)
 
-        has_row_id = adapter.column_exists(schema_name, table_name, "row_id")
+        has_row_id = adapter.column.column_exists(schema_name, table_name, "row_id")
 
         if has_row_id:
             min_row_id = int(
-                adapter.execute(
+                adapter.query_executor.execute(
                     f"SELECT COALESCE(MIN(row_id),0) FROM `{schema_name}`.`{table_name}` WHERE {filter_by}"
                 )[0][0]
             )
             max_row_id = int(
-                adapter.execute(
+                adapter.query_executor.execute(
                     f"SELECT COALESCE(MAX(row_id),0) FROM `{schema_name}`.`{table_name}` WHERE {filter_by}"
                 )[0][0]
             )
@@ -84,7 +84,7 @@ class ExportOperations:
                 if output_file.exists() or (existing_plain and existing_plain.exists()):
                     continue
 
-                adapter.dump_table_chunk(
+                adapter.dump_client.dump_table_chunk(
                     schema_name=schema_name,
                     table_name=table_name,
                     output_file=str(output_file),
@@ -103,7 +103,7 @@ class ExportOperations:
                 sysmsg.warning(f"Output file {output_file} already exists. Skipping dump for table '{table_name}'.")
                 return
 
-            adapter.dump_table_data(
+            adapter.dump_client.dump_table_data(
                 schema_name=schema_name,
                 table_name=table_name,
                 output_file=str(output_file),
@@ -137,7 +137,7 @@ class ExportOperations:
         compress: bool = False,
     ) -> None:
         adapter: EnvironmentGateway = self.registry.get(env_name)
-        for table_name in sorted(adapter.get_tables(schema_name)):
+        for table_name in sorted(adapter.table.get_tables(schema_name)):
             self.export_table(
                 env_name,
                 schema_name,

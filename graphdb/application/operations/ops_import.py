@@ -29,10 +29,10 @@ class ImportOperations:
         adapter: EnvironmentGateway = self.registry.get(env_name)
         table_name = os.path.basename(input_folder)
 
-        if not adapter.database_exists(schema_name):
-            adapter.create_database(schema_name)
+        if not adapter.database.database_exists(schema_name):
+            adapter.database.create_database(schema_name)
 
-        if not ignore_existing and adapter.table_exists(schema_name, table_name):
+        if not ignore_existing and adapter.table.table_exists(schema_name, table_name):
             sysmsg.warning(
                 f"Table {schema_name}.{table_name} already exists. "
                 f"Flag 'ignore_existing' set to {ignore_existing}."
@@ -87,9 +87,9 @@ class ImportOperations:
         table_name = os.path.basename(input_folder)
 
         for key_name, key_chunk in parsed_keys:
-            if key_name and adapter.key_exists(schema_name, table_name, key_name):
+            if key_name and adapter.key.key_exists(schema_name, table_name, key_name):
                 continue
-            adapter.execute_in_shell(
+            adapter.mysql_client.execute_query(
                 f"ALTER TABLE `{schema_name}`.`{table_name}` ADD {key_chunk};",
                 database=schema_name,
             )
@@ -134,8 +134,8 @@ class ImportOperations:
         compress: bool = False,
     ) -> None:
         adapter: EnvironmentGateway = self.registry.get(env_name)
-        if not adapter.database_exists(schema_name):
-            adapter.create_database(schema_name)
+        if not adapter.database.database_exists(schema_name):
+            adapter.database.create_database(schema_name)
 
         table_folders = [
             Path(p)
@@ -155,7 +155,7 @@ class ImportOperations:
 
     def _execute_data_file(
         self,
-        adapter: ImportRestorePort,
+        adapter: EnvironmentGateway,
         schema_name: str,
         file_path: Path,
         table_name: str,
@@ -163,10 +163,10 @@ class ImportOperations:
     ) -> None:
         if ignore_existing:
             # Stream through sed to avoid loading large files into memory.
-            adapter.execute_file_with_sed(
+            adapter.mysql_client.execute_file_with_sed(
                 str(file_path),
                 database=schema_name,
                 sed_pattern=r"s/^INSERT INTO /INSERT IGNORE INTO /",
             )
         else:
-            adapter.execute_from_file(str(file_path), database=schema_name)
+            adapter.mysql_client.execute_from_file(str(file_path), database=schema_name)

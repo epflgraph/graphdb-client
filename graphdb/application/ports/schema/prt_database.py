@@ -1,0 +1,9 @@
+from __future__ import annotations
+
+from typing import Any, Protocol
+
+class DatabaseSchemaPort(Protocol):
+    """Port interface implemented by matching adapter."""
+    def create_database(self, schema_name: str, drop_existing: bool = False) -> None: ...
+    def database_exists(self, schema_name: str) -> bool: ...
+    def drop_database(self, schema_name: str) -> None: ...

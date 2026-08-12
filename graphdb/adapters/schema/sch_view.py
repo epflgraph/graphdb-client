@@ -7,6 +7,7 @@ from sqlalchemy.engine import Engine
 
 from graphdb.adapters.schema.shared import SchemaExecutor, _q
 from graphdb.domain.exceptions import SchemaError
+from graphdb.domain.models.mdl_table import View
 
 
 class ViewSchemaAdapter:
@@ -48,3 +49,7 @@ class ViewSchemaAdapter:
         )
         rows = self._exec.execute(query)
         return bool(rows) and rows[0][0] == "VIEW"
+
+    def describe_view(self, schema_name: str, view_name: str) -> View:
+        create_sql = self.get_create_view(schema_name, view_name)
+        return View(name=view_name, create_sql=create_sql)

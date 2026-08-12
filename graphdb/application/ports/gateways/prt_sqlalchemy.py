@@ -1,0 +1,9 @@
+from __future__ import annotations
+
+from typing import Any, Dict, List, Optional, Protocol, Tuple, Union
+
+class SQLAlchemyQueryExecutorPort(Protocol):
+    """Port interface implemented by matching adapter."""
+    def execute(self, query: str, schema_name: Optional[str] = None, params: Optional[Dict[str, Any]] = None, commit: bool = False, return_exception: bool = False, query_id: Optional[str] = None) -> Union[List[Any], Tuple[str, str, Any]]: ...
+    def execute_stream_to_file(self, query: str, output_file: str, schema_name: Optional[str] = None, params: Optional[Dict[str, Any]] = None, fetch_size: int = 1000, query_id: Optional[str] = None) -> None: ...
+    def test(self) -> bool: ...
