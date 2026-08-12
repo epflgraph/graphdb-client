@@ -1,7 +1,18 @@
 # graphdb/application/operations/ops_compare.py
 from __future__ import annotations
+import json
 import random
-from time import time
+import time
+
+import numpy as np
+
+# Allow running this file directly from the repo root
+if __name__ == "__main__":
+    import sys
+    from pathlib import Path
+    project_root = Path(__file__).resolve().parents[3]
+    sys.path.insert(0, str(project_root))
+
 from graphdb.domain.models.mdl_config import GraphDBConfig
 from graphdb.application.policies.pol_table import TableComparisonPolicy
 from graphdb.adapters.environments import Environments
@@ -712,9 +723,33 @@ class CompareOperations:
             self.status.error(f"🚨 Table {source_schema_name}.{source_table_name} does not have a 'uid' unique key. Cannot compare by uid.")
             return
 
+        target_keys = self.envs.get(target_engine_name).key.get_keys(target_schema_name, target_table_name)
+        if 'uid' not in target_keys:
+            self.status.error(f"🚨 Table {target_schema_name}.{target_table_name} does not have a 'uid' unique key. Cannot compare by uid.")
+            return
+
+        source_uid_columns = source_keys.get('uid', [])
+        target_uid_columns = target_keys.get('uid', [])
+        if source_uid_columns != target_uid_columns:
+            self.status.error(
+                f"🚨 UID key mismatch: source uses {source_uid_columns}, target uses {target_uid_columns}. "
+                "Cannot compare tables with different uid keys."
+            )
+            return
+
         # Get random uid tuple set
         random_key_set  = self.get_random_uid_set(engine_name=source_engine_name, schema_name=source_schema_name, table_name=source_table_name, sample_size=round(sample_size/2), partition_by=None, use_row_id=False)
         random_key_set += self.get_random_uid_set(engine_name=target_engine_name, schema_name=target_schema_name, table_name=target_table_name, sample_size=round(sample_size/2), partition_by=None, use_row_id=False)
+
+        # Defensive: every uid tuple must have the same arity as the uid key
+        expected_uid_len = len(source_uid_columns)
+        bad_uid_count = sum(1 for uid in random_key_set if len(uid) != expected_uid_len)
+        if bad_uid_count:
+            self.status.error(
+                f"🚨 Found {bad_uid_count} uid tuple(s) with unexpected arity (expected {expected_uid_len} columns). "
+                "Skipping mismatched tuples."
+            )
+            random_key_set = [uid for uid in random_key_set if len(uid) == expected_uid_len]
 
         # Return if no rows found
         if len(random_key_set) == 0:
@@ -883,8 +918,8 @@ class CompareOperations:
             print('ZeroDivisionError')
             print('sample_size:', sample_size)
             print('stats dict:')
-            rich.print_json(data=stats)
-            exit()
+            print(json.dumps(stats, indent=2, default=str))
+            raise
 
         # print("\033[31mThis is red text\033[0m")
         # print("\033[32mThis is green text\033[0m")
