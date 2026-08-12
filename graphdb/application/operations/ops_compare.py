@@ -1,7 +1,18 @@
 # graphdb/application/operations/ops_compare.py
 from __future__ import annotations
-import json, random, time
+import json
+import random
+import time
+
 import numpy as np
+
+# Allow running this file directly from the repo root
+if __name__ == "__main__":
+    import sys
+    from pathlib import Path
+    project_root = Path(__file__).resolve().parents[3]
+    sys.path.insert(0, str(project_root))
+
 from graphdb.domain.models.mdl_config import GraphDBConfig
 from graphdb.adapters.environments import Environments
 from graphdb.adapters.rendering.rdr_statusmsg import StatusMessageAdapter
@@ -638,10 +649,10 @@ class CompareOperations:
         """
 
         # Get the list of tables in the source schema
-        source_tables = self.envs.get(source_engine_name).table.get_table_names(source_schema_name)
+        source_tables = self.envs.get(source_engine_name).table.get_tables(source_schema_name)
 
         # Get the list of tables in the target schema
-        target_tables = self.envs.get(target_engine_name).table.get_table_names(target_schema_name)
+        target_tables = self.envs.get(target_engine_name).table.get_tables(target_schema_name)
 
         # Get the union of table names from both source and target schemas
         all_tables = sorted(set(source_tables) | set(target_tables))
@@ -1023,7 +1034,7 @@ class CompareOperations:
                     ignore_warnings: bool = False):
         """
         Compare all tables in a database across two MySQL servers/schemas.
-        Calls compare_tables() for each table and aggregates results.
+        Calls compare_tables_by_metadata() for each table and aggregates results.
         """
         self.status.info("🔎 Compare database across MySQL servers.")
         self.status.trace(f"Source ........... {source_engine_name} / {source_schema_name}")
@@ -1039,7 +1050,7 @@ class CompareOperations:
 
         results = {}
         for table_name in all_tables:
-            result = self.compare_tables(
+            result = self.compare_tables_by_metadata(
                 source_engine_name, source_schema_name,
                 target_engine_name, target_schema_name,
                 table_name,
