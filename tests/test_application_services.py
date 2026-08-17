@@ -127,7 +127,9 @@ class TestCompareOperations(unittest.TestCase):
         })
         service = CompareOperations(registry)
         result = service.compare_tables_by_random_sampling(
-            "src", "src", "dst", "dst", "users", sample_size=10
+            "src", "src", "users",
+            "dst", "dst", "users",
+            sample_size=10
         )
         self.assertIn("error", result)
         self.assertIn("uid", result["error"])

@@ -50,32 +50,6 @@ def _print_table_result(result):
         print(f"{metric:<24} {a:<24} {b:<24} {status_symbol}")
 
 
-def _print_sampling_result(result):
-    table = result["table"]
-    source_path = f"{result['source']['env']}.{result['source']['schema']}"
-    target_path = f"{result['target']['env']}.{result['target']['schema']}"
-
-    print("\n")
-    print(f"Random sampling comparison for {table}")
-    print(f"  Source: {source_path}")
-    print(f"  Target: {target_path}")
-
-    if "error" in result:
-        print(f"  ❌ {result['error']}")
-        return
-
-    print(f"  Sample size: {result['sample_size']}")
-    print(f"  ✅ Matched: {result['matched']}")
-    print(f"  🆕 New rows (source only): {result['new_rows']}")
-    print(f"  🗑️  Deleted rows (target only): {result['deleted_rows']}")
-    print(f"  ⚠️  Mismatched rows: {result['mismatched']}")
-
-    if result["mismatch_examples"]:
-        print("  Mismatch examples:")
-        for example in result["mismatch_examples"]:
-            print(f"    uid={example['uid']}")
-
-
 def cmd_compare(args):
     print("🖥️  ~ GraphDB client CLI. Compare database or tables across servers.")
 
@@ -83,25 +57,23 @@ def cmd_compare(args):
 
     if args.random_sampling:
         if args.table_name:
-            result = service.compare_tables_by_random_sampling(
+            service.compare_tables_by_random_sampling(
                 args.from_env,
                 args.from_schema,
+                args.table_name,
                 args.to_env,
                 args.to_schema,
                 args.table_name,
                 sample_size=args.sample_size,
             )
-            _print_sampling_result(result)
         else:
-            results = service.compare_databases_by_random_sampling(
+            service.compare_all_tables_by_random_sampling(
                 args.from_env,
                 args.from_schema,
                 args.to_env,
                 args.to_schema,
                 sample_size=args.sample_size,
             )
-            for result in results:
-                _print_sampling_result(result)
         print("🖥️  ~ Done.")
         return
 
