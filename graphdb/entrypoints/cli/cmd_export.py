@@ -24,8 +24,7 @@ def cmd_export(args):
             compress=z,
         )
     elif not t and c and not d:
-        for table_name in sorted(args.ctx.container.environments.get(args.env).table.get_tables(args.schema_name)):
-            service.export_create_table(args.env, args.schema_name, table_name, args.output_folder)
+        service.export_create_tables_in_database(args.env, args.schema_name, args.output_folder)
     elif not t and d:
         service.export_database(
             args.env,

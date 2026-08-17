@@ -57,6 +57,38 @@ class TestExportOperations(unittest.TestCase):
         service.export_database("env", "mydb", "/tmp/export", include_create_tables=False)
         self.assertEqual(len(dump.dumps), 2)
 
+    def test_export_create_tables_in_database_writes_all_create_table_files(self):
+        schema = FakeSchemaAdapter(
+            tables={"mydb": ["users", "posts"]},
+            create_statements={
+                "mydb.users": "CREATE TABLE `users` (\n  `row_id` int NOT NULL AUTO_INCREMENT,\n  PRIMARY KEY (`row_id`)\n) ENGINE=InnoDB",
+                "mydb.posts": "CREATE TABLE `posts` (\n  `row_id` int NOT NULL AUTO_INCREMENT,\n  PRIMARY KEY (`row_id`)\n) ENGINE=InnoDB",
+            },
+        )
+        fs = FakeFilesystemAdapter()
+        registry = FakeEnvironments({
+            "env": FakeEnvironmentAdapter(schema=schema, filesystem=fs),
+        })
+        service = ExportOperations(registry)
+        service.export_create_tables_in_database("env", "mydb", "/tmp/export")
+
+        paths = list(fs.files.keys())
+        self.assertEqual(len(paths), 6)  # 3 files per table, 2 tables
+        self.assertTrue(any("users/CREATE_TABLE.sql" in str(p) for p in paths))
+        self.assertTrue(any("posts/CREATE_TABLE.sql" in str(p) for p in paths))
+
+    def test_export_table_data_in_database_dumps_all_tables(self):
+        schema = FakeSchemaAdapter(tables={"mydb": ["users", "posts"]})
+        dump = FakeDumpAdapter()
+        fs = FakeFilesystemAdapter()
+        registry = FakeEnvironments({
+            "env": FakeEnvironmentAdapter(schema=schema, dump=dump, filesystem=fs),
+        })
+        service = ExportOperations(registry)
+        service.export_table_data_in_database("env", "mydb", "/tmp/export")
+        self.assertEqual(len(dump.dumps), 2)
+        self.assertEqual({d["table"] for d in dump.dumps}, {"users", "posts"})
+
 
 class TestCompareOperations(unittest.TestCase):
     def test_compare_tables_reports_error_when_table_missing(self):

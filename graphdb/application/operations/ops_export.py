@@ -126,6 +126,37 @@ class ExportOperations:
             self.export_create_table(env_name, schema_name, table_name, output_folder)
         self.export_table_data(env_name, schema_name, table_name, output_folder, filter_by, chunk_size, compress)
 
+    def export_create_tables_in_database(
+        self,
+        env_name: str,
+        schema_name: str,
+        output_folder: str,
+    ) -> None:
+        adapter: EnvironmentGateway = self.registry.get(env_name)
+        for table_name in sorted(adapter.table.get_tables(schema_name)):
+            self.export_create_table(env_name, schema_name, table_name, output_folder)
+
+    def export_table_data_in_database(
+        self,
+        env_name: str,
+        schema_name: str,
+        output_folder: str,
+        filter_by: str = "TRUE",
+        chunk_size: int = 1_000_000,
+        compress: bool = False,
+    ) -> None:
+        adapter: EnvironmentGateway = self.registry.get(env_name)
+        for table_name in sorted(adapter.table.get_tables(schema_name)):
+            self.export_table_data(
+                env_name,
+                schema_name,
+                table_name,
+                output_folder,
+                filter_by=filter_by,
+                chunk_size=chunk_size,
+                compress=compress,
+            )
+
     def export_database(
         self,
         env_name: str,
