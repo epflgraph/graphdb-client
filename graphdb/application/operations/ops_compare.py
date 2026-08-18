@@ -648,7 +648,14 @@ class CompareOperations:
         #----------------------------------------------------#
 
         if test_results['flawless_match_test']:
-            print("Test result: \033[32mFlawless match.\033[0m")
+            if stats['new_rows'] > 0 and stats['deleted_rows'] > 0:
+                print("Test result: \033[32mPerfect match on shared rows (but new rows added and rows deleted).\033[0m")
+            elif stats['new_rows'] > 0:
+                print("Test result: \033[32mPerfect match on shared rows (but new rows added).\033[0m")
+            elif stats['deleted_rows'] > 0:
+                print("Test result: \033[32mPerfect match on shared rows (but rows deleted).\033[0m")
+            else:
+                print("Test result: \033[32mFlawless match.\033[0m")
         elif stats['existing_rows'] == 0 and stats['new_rows'] > 0 and stats['deleted_rows'] == 0:
             print("Test result: \033[33mTarget table is empty. All rows are new.\033[0m")
         elif stats['existing_rows'] == 0 and stats['deleted_rows'] > 0 and stats['new_rows'] == 0:
