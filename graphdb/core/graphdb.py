@@ -1388,10 +1388,11 @@ class GraphDB():
                 if dbapi_code==1062: # Duplicate entry
                     sysmsg.warning(f'Duplicate entry error when inserting into {t} with keys {sql_params}. Continuing ...')
                 else:
-                    sysmsg.critical(f'Error when inserting into {t} with keys {sql_params}. Exiting ...')
-                    print('Error details:')
-                    print(f'{error_type}: {error_msg} (DBAPI code: {dbapi_code})')
-                    exit()
+                    sysmsg.critical(f'Error when inserting into {t} with keys {sql_params}.')
+                    raise RuntimeError(
+                        f"Database error while upserting {t}: {error_type}: {error_msg} "
+                        f"(DBAPI code: {dbapi_code})"
+                    ) from None
 
         # Return the test results
         return eval_results
@@ -3264,11 +3265,10 @@ class GraphDB():
                 stats['percent_custom_column_mismatch'] = 0
                 stats['percent_set_to_null'] = 0
         except ZeroDivisionError:
-            print('ZeroDivisionError')
-            print('sample_size:', sample_size)
-            print('stats dict:')
-            rich.print_json(data=stats)
-            exit()
+            raise ValueError(
+                f"ZeroDivisionError while computing comparison stats "
+                f"(sample_size={sample_size}, stats={stats})"
+            ) from None
 
         # print("\033[31mThis is red text\033[0m")
         # print("\033[32mThis is green text\033[0m")
