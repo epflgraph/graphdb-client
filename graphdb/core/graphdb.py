@@ -11,7 +11,8 @@ import numpy as np
 import pandas as pd
 from tabulate import tabulate
 import sys, os, re, subprocess, json, datetime, hashlib, random, glob, time, rich, ssl, shlex, shutil, gzip, tempfile, types
-from graphdb.core.config import GraphDBConfig, GraphDBConfigError
+from graphdb.core.config import GraphDBConfig
+from graphdb.core.exceptions import GraphDBConfigError, GraphDBOperationalError
 from graphdb.models.sqlquery import print_sql
 
 # Find the repository root directory
@@ -1256,7 +1257,7 @@ class GraphDB():
         return value
 
     # Method: Execute a single-row upsert safely
-    def execute_upsert_row(self, engine_name, schema_name, table_name, key_column_names, key_column_values, upd_column_names, upd_column_values, actions=()):
+    def execute_upsert_row(self, engine_name, schema_name, table_name, key_column_names, key_column_values, upd_column_names, upd_column_values, actions=(), *, max_retries=3, retry_delay=0.5):
         """
         Possible actions: 'print', 'eval', 'commit'
         """
@@ -1380,19 +1381,42 @@ class GraphDB():
                 compile_kwargs={"literal_binds": True}
             ))
 
-        # Execute commit
+        # Execute commit (with retries for transient lock-wait timeouts)
         if 'commit' in actions:
-            out = self.execute_query(engine_name=engine_name, query=sql_query_commit, params=sql_params, commit=True, return_exception=True)
-            if not type(out) is list:
+            for attempt in range(max_retries + 1):
+                out = self.execute_query(engine_name=engine_name, query=sql_query_commit, params=sql_params, commit=True, return_exception=True)
+                if type(out) is list:
+                    break
+
                 error_type, error_msg, dbapi_code = out
-                if dbapi_code==1062: # Duplicate entry
+
+                if dbapi_code == 1062:  # Duplicate entry
                     sysmsg.warning(f'Duplicate entry error when inserting into {t} with keys {sql_params}. Continuing ...')
-                else:
-                    sysmsg.critical(f'Error when inserting into {t} with keys {sql_params}.')
-                    raise RuntimeError(
-                        f"Database error while upserting {t}: {error_type}: {error_msg} "
-                        f"(DBAPI code: {dbapi_code})"
-                    ) from None
+                    break
+
+                if dbapi_code == 1205 and attempt < max_retries:
+                    sysmsg.warning(
+                        f'Lock wait timeout on {t} (attempt {attempt + 1}/{max_retries + 1}), '
+                        f'retrying in {retry_delay * (2 ** attempt):.2f}s ...'
+                    )
+                    time.sleep(retry_delay * (2 ** attempt))
+                    continue
+
+                prefix = (
+                    f"Lock wait timeout persisted after {max_retries} retries"
+                    if dbapi_code == 1205
+                    else "Database error"
+                )
+                sysmsg.critical(f'{prefix} while inserting into {t} with keys {sql_params}.')
+                raise GraphDBOperationalError(
+                    f"{prefix} while upserting {t}: {error_type}: {error_msg} "
+                    f"(DBAPI code: {dbapi_code})",
+                    dbapi_code=dbapi_code,
+                    dbapi_msg=error_msg,
+                    error_type=error_type,
+                    table=t,
+                    params=sql_params,
+                ) from None
 
         # Return the test results
         return eval_results

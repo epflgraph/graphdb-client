@@ -67,8 +67,7 @@ def _resolve_dotenv_override() -> Optional[Path]:
     return None
 
 
-class GraphDBConfigError(ValueError):
-    pass
+from graphdb.core.exceptions import GraphDBConfigError
 
 
 @dataclass(frozen=True)
