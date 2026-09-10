@@ -1,30 +1,6 @@
-from pathlib import Path
-import shutil
+"""graphdb-client package.
 
-
-def _ensure_default_config() -> None:
-    """
-    Ensure config.yaml exists at the repository root for the GraphDB CLI.
-    """
-    package_dir = Path(__file__).resolve().parent
-    target_config = package_dir.parent / "config.yaml"
-    candidate_sources = [
-        Path.cwd() / "config.yaml",
-        package_dir / "config.yaml",
-    ]
-
-    if target_config.exists():
-        return
-
-    for source in candidate_sources:
-        if not source.exists():
-            continue
-        try:
-            shutil.copyfile(source, target_config)
-            break
-        except OSError:
-            # Keep imports resilient in read-only environments.
-            break
-
-
-_ensure_default_config()
+Importing this package is side-effect free. Configuration is resolved lazily
+by ``graphdb.domain.models.mdl_config.GraphDBConfig`` when the CLI or an
+application service needs it.
+"""

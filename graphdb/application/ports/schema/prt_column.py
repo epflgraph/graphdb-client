@@ -1,8 +1,9 @@
 from __future__ import annotations
 
-from typing import Any, Dict, List, Protocol
+from typing import Any, Dict, List, Protocol, runtime_checkable
 from graphdb.domain.models.mdl_table import Column
 
+@runtime_checkable
 class ColumnSchemaPort(Protocol):
     """Port interface implemented by matching adapter."""
     def apply_datatypes(self, schema_name, table_name, datatypes_json, display_elapsed_time = False, estimated_num_rows = False): ...

@@ -3,7 +3,7 @@ from __future__ import annotations
 from typing import Dict, List, Optional
 
 from graphdb.adapters.gateways.gtw_environment import EnvironmentGateway
-from graphdb.domain.models.mdl_config import GraphDBConfig
+from graphdb.domain.models.mdl_config import GraphDBConfig, GraphDBConfigError
 from graphdb.domain.models.mdl_connection import ConnectionParams
 
 
@@ -36,7 +36,9 @@ class Environments:
         name = env_name or self.config.default_env
         if name not in self.config.environments:
             available = ", ".join(sorted(self.config.environments.keys()))
-            raise ValueError(f"Environment '{name}' not configured. Available: [{available}]")
+            raise GraphDBConfigError(
+                f"Environment '{name}' not configured. Available: [{available}]"
+            )
 
         if name not in self._gateways:
             self._gateways[name] = self._build_gateway(name)

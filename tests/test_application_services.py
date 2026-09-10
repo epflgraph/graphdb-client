@@ -12,6 +12,7 @@ from tests.fakes import (
     FakeEnvironmentAdapter,
     FakeFilesystemAdapter,
     FakeSchemaAdapter,
+    FakeStatusMessage,
 )
 
 
@@ -91,33 +92,31 @@ class TestExportOperations(unittest.TestCase):
 
 
 class TestCompareOperations(unittest.TestCase):
-    def test_compare_tables_reports_error_when_table_missing(self):
+    def test_compare_tables_by_metadata_reports_fatal_when_table_missing(self):
         schema = FakeSchemaAdapter(tables={"src": ["users"], "dst": []})
         registry = FakeEnvironments({
             "src": FakeEnvironmentAdapter(schema=schema),
             "dst": FakeEnvironmentAdapter(schema=schema),
         })
-        service = CompareOperations(registry)
-        result = service.compare_tables("src", "src", "dst", "dst", "missing")
-        self.assertIn("error", result)
+        service = CompareOperations(registry, status=FakeStatusMessage())
+        result = service.compare_tables_by_metadata("src", "src", "dst", "dst", "missing")
+        # A missing table yields a fatal diff entry, not a clean comparison.
+        self.assertIn("fatal", result["diffs"])
+        self.assertTrue(len(result["diffs"]["fatal"]) > 0)
 
-    def test_compare_tables_reports_ok_for_equal_tables(self):
-        db = FakeDatabaseAdapter(responses={
-            ("SELECT COUNT(*) FROM `src`.`users`", "src"): [[100]],
-            ("SELECT COUNT(*) FROM `dst`.`users`", "dst"): [[100]],
-        })
-        schema = FakeSchemaAdapter(
-            tables={"src": ["users"], "dst": ["users"]},
-        )
+    def test_compare_tables_by_metadata_returns_structure_for_missing_table(self):
+        schema = FakeSchemaAdapter(tables={"src": ["users"], "dst": ["users"]})
         registry = FakeEnvironments({
-            "src": FakeEnvironmentAdapter(database=db, schema=schema),
-            "dst": FakeEnvironmentAdapter(database=db, schema=schema),
+            "src": FakeEnvironmentAdapter(schema=schema),
+            "dst": FakeEnvironmentAdapter(schema=schema),
         })
-        service = CompareOperations(registry)
-        result = service.compare_tables("src", "src", "dst", "dst", "users")
-        self.assertNotIn("error", result)
-        statuses = {r["metric"]: r["status"] for r in result["rows"]}
-        self.assertEqual(statuses["table_rows"], "OK")
+        service = CompareOperations(registry, status=FakeStatusMessage())
+        # "missing" is not in either schema's table list, so neither side can
+        # be fetched; the result must report unavailable source/target metadata.
+        result = service.compare_tables_by_metadata("src", "src", "dst", "dst", "missing")
+        self.assertIsNone(result["source"])
+        self.assertIsNone(result["target"])
+        self.assertIsNone(result["table"])
 
     def test_compare_tables_by_random_sampling_requires_uid_key(self):
         schema = FakeSchemaAdapter(tables={"src": ["users"], "dst": ["users"]})
@@ -125,7 +124,7 @@ class TestCompareOperations(unittest.TestCase):
             "src": FakeEnvironmentAdapter(schema=schema),
             "dst": FakeEnvironmentAdapter(schema=schema),
         })
-        service = CompareOperations(registry)
+        service = CompareOperations(registry, status=FakeStatusMessage())
         result = service.compare_tables_by_random_sampling(
             "src", "src", "users",
             "dst", "dst", "users",

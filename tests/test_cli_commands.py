@@ -6,7 +6,7 @@ from unittest.mock import patch
 from graphdb.application.operations.ops_config import ConfigOperations
 from graphdb.domain.models.mdl_config import GraphDBConfig
 from graphdb.entrypoints.cli.cmd_config import cmd_config
-from graphdb.entrypoints.cli.cmd_compare import cmd_compare, _print_table_result
+from graphdb.entrypoints.cli.cmd_compare import cmd_compare
 from graphdb.entrypoints.cli.cmd_copy import cmd_copy
 from graphdb.entrypoints.cli.cmd_export import cmd_export
 from graphdb.entrypoints.cli.cmd_import import cmd_import

@@ -1,7 +1,8 @@
 from __future__ import annotations
 
+from contextlib import contextmanager
 from pathlib import Path
-from typing import Any, Dict, List, Optional, Tuple, Union
+from typing import Any, Dict, Iterator, List, Optional, Tuple, Union
 
 from graphdb.domain.models.mdl_table import Column, Key, Table, View
 
@@ -37,6 +38,19 @@ class FakeDatabaseAdapter:
         self.executed.append({"query": query, "database": database, "shell": True})
 
     def execute_from_file(self, file_path: str, database: Optional[str] = None) -> None:
+        self.files_executed.append(file_path)
+
+    def execute_query(self, query: str, database: Optional[str] = None, query_id: Optional[str] = None) -> None:
+        """DBClientPort conformance: record a shell-style query execution."""
+        self.executed.append({"query": query, "database": database, "shell": True, "query_id": query_id})
+
+    def execute_file_with_sed(
+        self,
+        file_path: str,
+        database: Optional[str] = None,
+        sed_pattern: str = "s/^INSERT INTO /INSERT IGNORE INTO /",
+    ) -> None:
+        """DBClientPort conformance: record the file streamed through sed."""
         self.files_executed.append(file_path)
 
     def execute_stream_to_file(
@@ -142,6 +156,10 @@ class FakeSchemaAdapter:
     def get_columns(self, schema_name: str, table_name: str) -> List[Column]:
         return []
 
+    def apply_datatypes(self, schema_name, table_name, datatypes_json, display_elapsed_time=False, estimated_num_rows=False):
+        """ColumnSchemaPort conformance: no-op stub for the fake."""
+        return None
+
     def has_primary_key(self, schema_name: str, table_name: str) -> bool:
         return "PRIMARY" in self.keys.get(f"{schema_name}.{table_name}", {})
 
@@ -153,6 +171,10 @@ class FakeSchemaAdapter:
 
     def get_key_entities(self, schema_name: str, table_name: str) -> List[Key]:
         return []
+
+    def apply_keys(self, schema_name, table_name, keys_json, display_elapsed_time=False, estimated_num_rows=False):
+        """KeySchemaPort conformance: no-op stub for the fake."""
+        return None
 
     def get_exact_count(self, schema_name: str, table_name: str) -> int:
         return 0
@@ -177,6 +199,14 @@ class FakeSchemaAdapter:
 
     def describe_view(self, schema_name: str, view_name: str) -> View:
         return View(name=view_name, create_sql=self.get_create_view(schema_name, view_name))
+
+    def create_view(self, schema_name: str, view_name: str, query: str) -> None:
+        """ViewSchemaPort conformance: no-op stub for the fake."""
+        return None
+
+    def drop_view(self, schema_name: str, view_name: str) -> None:
+        """ViewSchemaPort conformance: no-op stub for the fake."""
+        return None
 
     def create_table_like(
         self,
@@ -398,3 +428,37 @@ class FakeFilesystemAdapter:
         plain = sorted(p for p in self.files if p.suffix == ".sql")
         gz = sorted(p for p in self.files if p.suffix == ".gz")
         return plain + gz
+
+
+class FakeStatusMessage:
+    """No-op fake for StatusMessagePort.
+
+    Records emitted messages so tests can assert on them, but performs no
+    console rendering and pulls in no rendering dependencies.
+    """
+
+    def __init__(self) -> None:
+        self.messages: List[Tuple[str, str]] = []
+
+    def success(self, message: str) -> None:
+        self.messages.append(("success", message))
+
+    def warning(self, message: str) -> None:
+        self.messages.append(("warning", message))
+
+    def error(self, message: str) -> None:
+        self.messages.append(("error", message))
+
+    def info(self, message: str) -> None:
+        self.messages.append(("info", message))
+
+    def trace(self, message: str) -> None:
+        self.messages.append(("trace", message))
+
+    @contextmanager
+    def status(self, message: str) -> Iterator[None]:
+        self.messages.append(("status", message))
+        yield
+
+    def track(self, sequence: Any, description: str = "") -> Any:
+        return iter(sequence)

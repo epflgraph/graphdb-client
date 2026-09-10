@@ -29,7 +29,7 @@
     ],
     "venvPath": ".",
     "venv": ".venv.graphdb",
-    "typeCheckingMode": "off",
+    "typeCheckingMode": "basic",
     "diagnosticMode": "openFilesOnly",
     "autoSearchPaths": false,
     "useLibraryCodeForTypes": false,

@@ -5,8 +5,8 @@ from loguru import logger as sysmsg
 from tqdm import tqdm
 
 from graphdb.application.policies.pol_ddl import DDLExportPolicy
-from graphdb.adapters.environments import Environments
-from graphdb.adapters.gateways.gtw_environment import EnvironmentGateway
+from graphdb.application.ports.gateways.prt_environments import EnvironmentRegistryPort
+from graphdb.application.ports.gateways.prt_environment import EnvironmentPort
 
 PBWIDTH = 64
 
@@ -14,7 +14,7 @@ PBWIDTH = 64
 class ExportOperations:
     """Use case orchestrator for exporting schemas and data to the filesystem."""
 
-    def __init__(self, registry: Environments) -> None:
+    def __init__(self, registry: EnvironmentRegistryPort) -> None:
         self.registry = registry
         self.ddl_policy = DDLExportPolicy()
 
@@ -25,7 +25,7 @@ class ExportOperations:
         table_name: str,
         output_folder: str,
     ) -> None:
-        adapter: EnvironmentGateway = self.registry.get(env_name)
+        adapter: EnvironmentPort = self.registry.get(env_name)
         table_folder = Path(output_folder) / schema_name / table_name
         table_folder.mkdir(parents=True, exist_ok=True)
 
@@ -47,7 +47,7 @@ class ExportOperations:
         chunk_size: int = 1_000_000,
         compress: bool = False,
     ) -> None:
-        adapter: EnvironmentGateway = self.registry.get(env_name)
+        adapter: EnvironmentPort = self.registry.get(env_name)
         table_folder = Path(output_folder) / schema_name / table_name
         table_folder.mkdir(parents=True, exist_ok=True)
 
@@ -132,7 +132,7 @@ class ExportOperations:
         schema_name: str,
         output_folder: str,
     ) -> None:
-        adapter: EnvironmentGateway = self.registry.get(env_name)
+        adapter: EnvironmentPort = self.registry.get(env_name)
         for table_name in sorted(adapter.table.get_tables(schema_name)):
             self.export_create_table(env_name, schema_name, table_name, output_folder)
 
@@ -145,7 +145,7 @@ class ExportOperations:
         chunk_size: int = 1_000_000,
         compress: bool = False,
     ) -> None:
-        adapter: EnvironmentGateway = self.registry.get(env_name)
+        adapter: EnvironmentPort = self.registry.get(env_name)
         for table_name in sorted(adapter.table.get_tables(schema_name)):
             self.export_table_data(
                 env_name,
@@ -167,7 +167,7 @@ class ExportOperations:
         include_create_tables: bool = False,
         compress: bool = False,
     ) -> None:
-        adapter: EnvironmentGateway = self.registry.get(env_name)
+        adapter: EnvironmentPort = self.registry.get(env_name)
         for table_name in sorted(adapter.table.get_tables(schema_name)):
             self.export_table(
                 env_name,

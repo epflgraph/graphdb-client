@@ -11,10 +11,7 @@ from graphdb.domain.models.mdl_table import View
 
 
 class ViewSchemaAdapter:
-    """Adapter for view-level schema operations.
-
-    Executes the same SQL as graphdb.application.core.app_graphdb.GraphDB.
-    """
+    """Adapter for view-level schema operations against a SQLAlchemy engine."""
 
     def __init__(self, engine: Engine) -> None:
         self._exec = SchemaExecutor(engine)

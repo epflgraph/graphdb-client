@@ -1,7 +1,8 @@
 from __future__ import annotations
 
-from typing import Any, Dict, List, Optional, Protocol, Tuple, Union
+from typing import Any, Dict, List, Optional, Protocol, Tuple, Union, runtime_checkable
 
+@runtime_checkable
 class SQLAlchemyQueryExecutorPort(Protocol):
     """Port interface implemented by matching adapter."""
     def execute(self, query: str, schema_name: Optional[str] = None, params: Optional[Dict[str, Any]] = None, commit: bool = False, return_exception: bool = False, query_id: Optional[str] = None) -> Union[List[Any], Tuple[str, str, Any]]: ...

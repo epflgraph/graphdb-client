@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 from graphdb.adapters.environments import Environments
+from graphdb.adapters.rendering.rdr_statusmsg import StatusMessageAdapter
 from graphdb.application.operations.ops_compare import CompareOperations
 from graphdb.application.operations.ops_config import ConfigOperations
 from graphdb.application.operations.ops_connectivity import ConnectivityOperations
@@ -22,7 +23,7 @@ class Container:
         # Application operations
         self.config_ops = ConfigOperations(config)
         self.connectivity_ops = ConnectivityOperations(self.environments)
-        self.compare_ops = CompareOperations(self.environments)
+        self.compare_ops = CompareOperations(self.environments, status=StatusMessageAdapter())
         self.export_ops = ExportOperations(self.environments)
         self.import_ops = ImportOperations(self.environments)
         self.copy_ops = CopyOperations(

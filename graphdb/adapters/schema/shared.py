@@ -5,14 +5,7 @@ from typing import List, Optional
 from sqlalchemy import text
 from sqlalchemy.engine import Engine
 
-
-def _q(name: str) -> str:
-    """Backtick-quote a single SQL identifier, escaping embedded backticks."""
-    return f"`{name.replace('`', '``')}`"
-
-
-def _qt(schema_name: str, table_name: str) -> str:
-    return f"`{schema_name}`.`{table_name}`"
+from graphdb.domain.sql import _q, _qt  # noqa: F401  (re-exported for adapters)
 
 
 class SchemaExecutor:

@@ -2,7 +2,6 @@
 from __future__ import annotations
 import json
 import random
-import time
 
 import numpy as np
 
@@ -13,9 +12,9 @@ if __name__ == "__main__":
     project_root = Path(__file__).resolve().parents[3]
     sys.path.insert(0, str(project_root))
 
-from graphdb.domain.models.mdl_config import GraphDBConfig
-from graphdb.adapters.environments import Environments
-from graphdb.adapters.rendering.rdr_statusmsg import StatusMessageAdapter
+from graphdb.application.ports.gateways.prt_environments import EnvironmentRegistryPort
+from graphdb.application.ports.rendering.prt_statusmsg import StatusMessagePort
+from graphdb.domain.sql import _q
 
 #==================#
 # Class definition #
@@ -24,22 +23,9 @@ class CompareOperations:
     """Class for comparing tables across engines, through random sampling or metadata comparison."""
 
     # Class initializer
-    def __init__(self, envs: Environments) -> None:
+    def __init__(self, envs: EnvironmentRegistryPort, status: StatusMessagePort) -> None:
         self.envs = envs
-        self.status = StatusMessageAdapter()
-
-    #------------------#
-    # Helper functions #
-    #------------------#
-
-    # Helper method to safely quote identifiers (e.g. database, table, column names) with backticks
-    def _q(self, name: str) -> str:
-        """Backtick-quote a single SQL identifier safely."""
-        return f"`{name.replace('`', '``')}`"
-
-    def _qt(self, schema_name: str, table_name: str) -> str:
-        """Backtick-quote a schema-qualified table name safely."""
-        return f"{self._q(schema_name)}.{self._q(table_name)}"
+        self.status = status
 
     #-----------------------------------------------------------------#
     # Method group: Functions for comparing tables by random sampling #
@@ -121,9 +107,9 @@ class CompareOperations:
             return []
 
         # Quote identifiers safely
-        q_schema = self._q(schema_name)
-        q_table = self._q(table_name)
-        q_uid_columns = [self._q(c) for c in uid_columns]
+        q_schema = _q(schema_name)
+        q_table = _q(table_name)
+        q_uid_columns = [_q(c) for c in uid_columns]
 
         # Using row_id?
         # Yes.
@@ -163,7 +149,7 @@ class CompareOperations:
             if partition_by in uid_columns:
 
                 # Fetch all partition values
-                partition_column_possible_vals = [r[0] for r in self.envs.get(engine_name).query_executor.execute(f"SELECT DISTINCT {self._q(partition_by)} FROM {q_schema}.{q_table};", schema_name=schema_name)]
+                partition_column_possible_vals = [r[0] for r in self.envs.get(engine_name).query_executor.execute(f"SELECT DISTINCT {_q(partition_by)} FROM {q_schema}.{q_table};", schema_name=schema_name)]
 
                 # Loop over the partition values
                 n_partitions = len(partition_column_possible_vals)
@@ -172,7 +158,7 @@ class CompareOperations:
                     sql_query_stack = []
                     for colval in partition_column_possible_vals:
                         sql_query_stack.append(
-                            f"(SELECT {', '.join(q_uid_columns)} FROM {q_schema}.{q_table} WHERE {self._q(partition_by)} = '{colval}' ORDER BY RAND() LIMIT {per_partition})"
+                            f"(SELECT {', '.join(q_uid_columns)} FROM {q_schema}.{q_table} WHERE {_q(partition_by)} = '{colval}' ORDER BY RAND() LIMIT {per_partition})"
                         )
                     sql_query = ' UNION ALL '.join(sql_query_stack)
 
@@ -245,10 +231,10 @@ class CompareOperations:
         select_columns = list(dict.fromkeys(uid_columns + data_columns))
 
         # Quote identifiers safely
-        q_schema = self._q(schema_name)
-        q_table = self._q(table_name)
-        q_uid_columns = [self._q(c) for c in uid_columns]
-        q_select_columns = [self._q(c) for c in select_columns]
+        q_schema = _q(schema_name)
+        q_table = _q(table_name)
+        q_uid_columns = [_q(c) for c in uid_columns]
+        q_select_columns = [_q(c) for c in select_columns]
 
         # Helper to format a Python value as a SQL literal
         def _sql_literal(v):
@@ -676,8 +662,6 @@ class CompareOperations:
             "mismatched": stats['mismatch'],
             "mismatch_examples": [{"uid": uid} for uid in mismatch_examples[:5]],
         })
-
-        time.sleep(1)
 
         return result
 
@@ -1109,6 +1093,11 @@ class CompareOperations:
 # Run as standalone script for testing #
 #======================================#
 if __name__ == "__main__":
+    # Concrete adapters are imported here (not at module level) so the
+    # application layer depends only on ports.
+    from graphdb.domain.models.mdl_config import GraphDBConfig
+    from graphdb.adapters.environments import Environments
+    from graphdb.adapters.rendering.rdr_statusmsg import StatusMessageAdapter
 
     # Load the configuration from the default file
     config = GraphDBConfig.from_default_file()
@@ -1117,7 +1106,7 @@ if __name__ == "__main__":
     envs = Environments(config)
 
     # Initialize the CompareOperations class
-    ops = CompareOperations(envs)
+    ops = CompareOperations(envs, status=StatusMessageAdapter())
 
     # Run with example parameters
     ops.compare_tables_by_random_sampling(

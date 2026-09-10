@@ -6,7 +6,7 @@ from loguru import logger as sysmsg
 
 from graphdb.application.operations.ops_export import ExportOperations
 from graphdb.application.operations.ops_import import ImportOperations
-from graphdb.adapters.environments import Environments
+from graphdb.application.ports.gateways.prt_environments import EnvironmentRegistryPort
 
 
 class CopyOperations:
@@ -16,7 +16,7 @@ class CopyOperations:
         self,
         export_ops: ExportOperations | None = None,
         import_ops: ImportOperations | None = None,
-        registry: Environments | None = None,
+        registry: EnvironmentRegistryPort | None = None,
     ) -> None:
         if export_ops is None or import_ops is None:
             if registry is None:

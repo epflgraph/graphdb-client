@@ -8,23 +8,27 @@
 [![Open Issues](https://img.shields.io/github/issues/epflgraph/graphdb-client)](https://github.com/epflgraph/graphdb-client/issues)
 [![Open PRs](https://img.shields.io/github/issues-pr/epflgraph/graphdb-client)](https://github.com/epflgraph/graphdb-client/pulls)
 
-Why Graph?
-==========
-The *Graph Data Platform* - developed by the AI engineering team at the [EPFL Center for Digital Education](https://www.epfl.ch/education/educational-initiatives/cede/) - is an open-source alternative to proprietary research information systems like Elsevier Pure. It federates educational and institutional data into a semantically interconnected knowledge graph of people, publications, labs, startups, courses, video lectures, and other educational resources. The [GraphSearch](https://graphsearch.epfl.ch/en) application provides lightning-fast search and discovery of the knowledge graph, as well as LLM-powered [chatbot](https://graphsearch.epfl.ch/en/chatbot) interaction with the indexed resources.
+🏠 [Project Home](https://github.com/epflgraph/graphproject) > Database Client
 
-**List of Graph services:**<br/>
- [Registry](https://github.com/epflgraph/graphregistry/)  |
-       [AI](https://github.com/epflgraph/graphai/)        |
- [Ontology](https://github.com/epflgraph/graphontology/)  |
-   [Search](https://github.com/epflgraph/graphsearch_ui/) |
-     [Chat](https://github.com/epflgraph/graphchatbot/)   |
-     [Dash](https://github.com/epflgraph/graphdashboard/) |
- DB client                                                |
-[ES client](https://github.com/epflgraph/graphes-client/)
+**List of core services:**<br/>
+[Registry](https://github.com/epflgraph/graphregistry) |
+[AI](https://github.com/epflgraph/graphai/tree/rcp_deployment) |
+[Ontology](https://github.com/epflgraph/graphontology) |
+[Search](https://github.com/epflgraph/graphsearch_ui) |
+[Chat](https://github.com/epflgraph/graphchatbot)
 
-Graph DB Client
-===============
-*Graph DB Client* is a Python-based command-line interface (CLI) tool designed to facilitate the management and interaction with the Graph Data Platform's underlying MySQL database. It provides a unified interface for performing various database operations, including configuration management, data import/export, and server administration tasks. The CLI is built using Python's `argparse` library, allowing users to execute commands in a structured and intuitive manner.
+**List of utilities:**<br/>
+[Dash](https://github.com/epflgraph/graphdashboard) |
+DB client |
+[ES client](https://github.com/epflgraph/graphes-client) |
+[SDK](https://github.com/epflgraph/graph-sdk) |
+[Agents](https://github.com/epflgraph/graphagents)
+
+<br />
+
+Overview
+========
+The **Graph Database Client** is a Python-based command-line interface (CLI) tool designed to facilitate the management and interaction with the Graph Data Platform's underlying MySQL database. It provides a unified interface for performing various database operations, including configuration management, data import/export, and server administration tasks. The CLI is built using Python's `argparse` library, allowing users to execute commands in a structured and intuitive manner.
 
 Configuration
 =============

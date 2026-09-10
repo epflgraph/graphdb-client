@@ -6,14 +6,14 @@ from loguru import logger as sysmsg
 from tqdm import tqdm
 
 from graphdb.application.policies.pol_ddl import DDLImportPolicy
-from graphdb.adapters.environments import Environments
-from graphdb.adapters.gateways.gtw_environment import EnvironmentGateway
+from graphdb.application.ports.gateways.prt_environments import EnvironmentRegistryPort
+from graphdb.application.ports.gateways.prt_environment import EnvironmentPort
 
 
 class ImportOperations:
     """Use case orchestrator for importing schemas and data from the filesystem."""
 
-    def __init__(self, registry: Environments) -> None:
+    def __init__(self, registry: EnvironmentRegistryPort) -> None:
         self.registry = registry
         self.ddl_policy = DDLImportPolicy()
 
@@ -26,7 +26,7 @@ class ImportOperations:
         ignore_existing: bool = False,
         verbose: bool = False,
     ) -> None:
-        adapter: EnvironmentGateway = self.registry.get(env_name)
+        adapter: EnvironmentPort = self.registry.get(env_name)
         table_name = os.path.basename(input_folder)
 
         if not adapter.database.database_exists(schema_name):
@@ -49,7 +49,7 @@ class ImportOperations:
             if updated_content != content:
                 adapter.filesystem.write_text(file_path, updated_content)
 
-        adapter.execute_from_file(str(file_path), database=schema_name)
+        adapter.mysql_client.execute_from_file(str(file_path), database=schema_name)
 
     def import_table_data(
         self,
@@ -60,7 +60,7 @@ class ImportOperations:
         verbose: bool = False,
         compress: bool = False,
     ) -> None:
-        adapter: EnvironmentGateway = self.registry.get(env_name)
+        adapter: EnvironmentPort = self.registry.get(env_name)
         table_folder = Path(input_folder)
 
         all_sql_files = adapter.filesystem.list_sql_files(table_folder, compress=compress)
@@ -77,7 +77,7 @@ class ImportOperations:
         input_folder: str,
         verbose: bool = False,
     ) -> None:
-        adapter: EnvironmentGateway = self.registry.get(env_name)
+        adapter: EnvironmentPort = self.registry.get(env_name)
         keys_file = Path(input_folder) / "CREATE_KEYS.sql"
         if not adapter.filesystem.exists(keys_file):
             return
@@ -133,7 +133,7 @@ class ImportOperations:
         verbose: bool = False,
         compress: bool = False,
     ) -> None:
-        adapter: EnvironmentGateway = self.registry.get(env_name)
+        adapter: EnvironmentPort = self.registry.get(env_name)
         if not adapter.database.database_exists(schema_name):
             adapter.database.create_database(schema_name)
 
@@ -155,7 +155,7 @@ class ImportOperations:
 
     def _execute_data_file(
         self,
-        adapter: EnvironmentGateway,
+        adapter: EnvironmentPort,
         schema_name: str,
         file_path: Path,
         table_name: str,

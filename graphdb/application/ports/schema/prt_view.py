@@ -1,10 +1,11 @@
 from __future__ import annotations
 
-from typing import List, Protocol
+from typing import List, Protocol, runtime_checkable
 
 from graphdb.domain.models.mdl_table import View
 
 
+@runtime_checkable
 class ViewSchemaPort(Protocol):
     """Port interface for ViewSchemaAdapter."""
 

@@ -18,10 +18,7 @@ PROCESSING_TIMES_PER_ROW = {
 
 
 class ColumnSchemaAdapter:
-    """Adapter for column-level schema introspection.
-
-    Executes the same SQL as graphdb.application.core.app_graphdb.GraphDB.
-    """
+    """Adapter for column-level schema introspection against a SQLAlchemy engine."""
 
     def __init__(self, engine: Engine, graphdb: Any = None) -> None:
         self._exec = SchemaExecutor(engine)

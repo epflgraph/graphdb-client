@@ -1,10 +1,11 @@
 from __future__ import annotations
 
-from typing import Any, Dict, List, Optional, Protocol
+from typing import Any, Dict, List, Optional, Protocol, runtime_checkable
 
 from graphdb.domain.models.mdl_table import Column, Key, Table
 
 
+@runtime_checkable
 class TableSchemaPort(Protocol):
     """Port interface for TableSchemaAdapter."""
 

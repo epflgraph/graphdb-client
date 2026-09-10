@@ -1,9 +1,10 @@
 from __future__ import annotations
 
 from pathlib import Path
-from typing import List, Protocol
+from typing import List, Protocol, runtime_checkable
 
 
+@runtime_checkable
 class FilesystemPort(Protocol):
     """Port interface implemented by matching adapter."""
 

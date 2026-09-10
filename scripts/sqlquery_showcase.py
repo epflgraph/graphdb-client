@@ -1,6 +1,6 @@
 #!/usr/bin/env python3
 """
-Showcase script for graphdb.models.sqlquery.SQLQuery.
+Showcase script for graphdb.domain.models.mdl_sqlquery.SQLQuery.
 
 Run:
   PYTHONPATH=. ./.venv.graphdb/bin/python scripts/sqlquery_showcase.py
@@ -11,7 +11,13 @@ from __future__ import annotations
 from rich.console import Console
 from rich.rule import Rule
 
-from graphdb.models.sqlquery import SQLQuery, print_sql
+from graphdb.domain.models.mdl_sqlquery import SQLQuery
+from graphdb.adapters.rendering.rdr_sqlquery import (
+    as_copyable,
+    print_query,
+    print_query_debug,
+    print_sql,
+)
 
 
 console = Console()
@@ -70,14 +76,14 @@ def main() -> None:
 
     print('\n')
     section("5) Pretty print / copyable")
-    q.print(console=console)
+    print_query(q, console=console)
     q_copy = q.model_copy(update={"copyable": True, "show_header": False})
     console.print("\nCopyable:")
-    console.print(q_copy.as_copyable())
+    console.print(as_copyable(q_copy))
 
     print('\n')
     section("6) Debug render + snapshot")
-    q.print_debug(console=console)
+    print_query_debug(q, console=console)
     console.print("Debug snapshot dict:")
     console.print(q.debug_snapshot())
 
@@ -92,7 +98,7 @@ def main() -> None:
     q_exec_ok = q.model_copy(update={"title": "Execute Success Demo"})
     rows = q_exec_ok.execute_with_timing(fake_query_executor)
     console.print(f"Returned rows={len(rows)}, elapsed_ms={q_exec_ok.elapsed_ms:.4f}, error={q_exec_ok.error}")
-    q_exec_ok.print_debug(console=console)
+    print_query_debug(q_exec_ok, console=console)
 
     print('\n')
     section("9) execute_with_timing failure")
@@ -102,7 +108,7 @@ def main() -> None:
     except RuntimeError as exc:
         console.print(f"Caught expected error: {exc}")
     console.print(f"error field captured: {q_exec_fail.error!r}")
-    q_exec_fail.print_debug(console=console)
+    print_query_debug(q_exec_fail, console=console)
 
     print('\n')
     section("10) from_parts constructor")
@@ -113,7 +119,7 @@ def main() -> None:
         title="Articles Query",
         db="prod",
     )
-    q2.print(console=console)
+    print_query(q2, console=console)
 
     print('\n')
     section("11) Compatibility print_sql wrapper")

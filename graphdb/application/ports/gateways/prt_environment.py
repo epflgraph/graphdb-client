@@ -1,6 +1,6 @@
 from __future__ import annotations
 
-from typing import Protocol
+from typing import Protocol, runtime_checkable
 
 from graphdb.application.ports.gateways.prt_dbclient import DBClientPort
 from graphdb.application.ports.gateways.prt_filesystem import FilesystemPort
@@ -13,6 +13,7 @@ from graphdb.application.ports.schema.prt_table import TableSchemaPort
 from graphdb.application.ports.schema.prt_view import ViewSchemaPort
 
 
+@runtime_checkable
 class EnvironmentPort(Protocol):
     """Container exposing the focused adapter ports for a single environment."""
 

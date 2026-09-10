@@ -13,10 +13,7 @@ from graphdb.domain.models.mdl_table import Column, Key, Table
 
 
 class TableSchemaAdapter:
-    """Adapter for table-level schema operations.
-
-    Executes the same SQL as graphdb.application.core.app_graphdb.GraphDB.
-    """
+    """Adapter for table-level schema operations against a SQLAlchemy engine."""
 
     _METADATA_COLUMNS = [
         "table_schema", "table_name", "engine", "table_collation",

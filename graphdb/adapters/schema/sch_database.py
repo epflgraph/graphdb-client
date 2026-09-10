@@ -6,10 +6,7 @@ from graphdb.adapters.schema.shared import SchemaExecutor
 
 
 class DatabaseSchemaAdapter:
-    """Adapter for database-level schema operations.
-
-    Executes the same SQL as graphdb.application.core.app_graphdb.GraphDB.
-    """
+    """Adapter for database-level schema operations against a SQLAlchemy engine."""
 
     def __init__(self, engine: Engine) -> None:
         self._exec = SchemaExecutor(engine)
