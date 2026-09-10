@@ -1,4 +1,4 @@
-<img src="assets/icon.png" alt="Project logo" height="64">
+<img src="assets/icon-b0ad78.png" alt="Project logo" height="64">
 
 [![License](https://img.shields.io/github/license/epflgraph/graphdb-client)](https://github.com/epflgraph/graphdb-client/blob/master/LICENSE)
 [![Latest Release on Github](https://img.shields.io/github/v/release/epflgraph/graphdb-client?sort=semver)](https://github.com/epflgraph/graphdb-client/releases/latest)
