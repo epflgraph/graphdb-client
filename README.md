@@ -7,6 +7,7 @@
 [![Last Commit](https://img.shields.io/github/last-commit/epflgraph/graphdb-client)](https://github.com/epflgraph/graphdb-client/commits/master)
 [![Open Issues](https://img.shields.io/github/issues/epflgraph/graphdb-client)](https://github.com/epflgraph/graphdb-client/issues)
 [![Open PRs](https://img.shields.io/github/issues-pr/epflgraph/graphdb-client)](https://github.com/epflgraph/graphdb-client/pulls)
+=
 
 🏠 [Project Home](https://github.com/epflgraph/graphproject) > Database Client
 
