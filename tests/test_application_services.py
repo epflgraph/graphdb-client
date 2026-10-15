@@ -1,4 +1,6 @@
+import tempfile
 import unittest
+from pathlib import Path
 
 from graphdb.application.operations.ops_compare import CompareOperations
 from graphdb.application.operations.ops_connectivity import ConnectivityOperations
@@ -132,6 +134,44 @@ class TestCompareOperations(unittest.TestCase):
         )
         self.assertIn("error", result)
         self.assertIn("uid", result["error"])
+
+
+class TestImportOperations(unittest.TestCase):
+    def test_import_database_passes_fully_qualified_table_folders(self):
+        # Regression: import_database used to enumerate bare folder names, so
+        # execute_from_file resolved SQL files against the process working
+        # directory and crashed on any export folder outside the CWD.
+        with tempfile.TemporaryDirectory() as tmpdir:
+            export_root = Path(tmpdir) / "mydb"
+            for table_name in ["posts", "users"]:
+                table_folder = export_root / table_name
+                table_folder.mkdir(parents=True)
+                create_sql = f"CREATE TABLE `{table_name}` (`row_id` int);"
+                (table_folder / "CREATE_TABLE.sql").write_text(create_sql)
+                (table_folder / "CREATE_TABLE_NO_KEYS.sql").write_text(create_sql)
+
+            registry = FakeEnvironments({
+                "target": FakeEnvironmentAdapter(database=FakeDatabaseAdapter()),
+            })
+            service = ImportOperations(registry)
+            service.import_database("target", "mydb", str(export_root))
+
+        db = registry.get("target").db
+        self.assertEqual(len(db.files_executed), 2)
+        for file_path in db.files_executed:
+            # Every executed SQL file must live under the export folder, never
+            # be a bare name resolved against the working directory.
+            self.assertTrue(file_path.startswith(str(export_root)), file_path)
+
+    def test_import_database_raises_for_missing_input_folder(self):
+        registry = FakeEnvironments({
+            "target": FakeEnvironmentAdapter(database=FakeDatabaseAdapter()),
+        })
+        service = ImportOperations(registry)
+        with self.assertRaises(FileNotFoundError):
+            service.import_database("target", "mydb", "/nonexistent/import/folder")
+        # The target database must not be created when the input is invalid.
+        self.assertFalse(registry.get("target").database.database_exists("mydb"))
 
 
 if __name__ == "__main__":

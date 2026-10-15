@@ -2,8 +2,10 @@ from __future__ import annotations
 
 import gzip
 import shlex
+import shutil
 import signal
 import subprocess
+import threading
 from pathlib import Path
 from typing import Optional
 
@@ -36,6 +38,11 @@ def _build_mysql_base_command(params: ConnectionParams) -> tuple[list[str], Dict
         "-h", params.host_address,
         "-P", str(params.port),
     ]
+    # Replay safeguard for dump files: the client refuses statements containing
+    # ASCII NUL unless binary mode is enabled, which replaying mysqldump output
+    # with binary blob data requires. Only pass it when the client supports it.
+    if "binary-mode" in supported_options:
+        cmd += ["--binary-mode"]
     if ssl_flags:
         cmd += ssl_flags
 
@@ -70,6 +77,7 @@ class BaseDBClientGateway:
             stdout=subprocess.PIPE,
             stderr=subprocess.PIPE,
             text=True,
+            errors="replace",
             env=self.env,
         )
         try:
@@ -103,20 +111,57 @@ class BaseDBClientGateway:
 
         opener = gzip.open if str(abs_file_path).endswith(".gz") else open
         try:
-            with opener(abs_file_path, "rt", encoding="utf-8") as fh:
+            with opener(abs_file_path, "rb") as src:
                 proc = subprocess.Popen(
                     cmd,
-                    stdin=fh,
+                    stdin=subprocess.PIPE,
                     stdout=subprocess.PIPE,
                     stderr=subprocess.PIPE,
-                    text=True,
                     env=self.env,
                 )
-                stdout, stderr = proc.communicate()
-                if proc.returncode != 0:
+
+                # communicate() cannot be used for stdin here: it closes the
+                # stdin pipe before a concurrent pump could finish writing.
+                # Drain the client's output pipes from side threads instead,
+                # while the decompressed SQL stream is pumped into stdin from
+                # the main thread. Popen consumes stdin at the file-descriptor
+                # level, so a gzip.open object can never be passed directly:
+                # the client would receive raw compressed bytes.
+                stdout_chunks: list[bytes] = []
+                stderr_chunks: list[bytes] = []
+
+                def _drain(stream, sink: list[bytes]) -> None:
+                    try:
+                        sink.append(stream.read())
+                    except (OSError, ValueError):
+                        pass
+
+                drain_out = threading.Thread(target=_drain, args=(proc.stdout, stdout_chunks))
+                drain_err = threading.Thread(target=_drain, args=(proc.stderr, stderr_chunks))
+                drain_out.start()
+                drain_err.start()
+
+                try:
+                    shutil.copyfileobj(src, proc.stdin)
+                except BrokenPipeError:
+                    # The client may exit before consuming all input.
+                    pass
+                finally:
+                    try:
+                        proc.stdin.close()
+                    except (BrokenPipeError, OSError):
+                        pass
+
+                drain_out.join()
+                drain_err.join()
+                returncode = proc.wait()
+
+                if returncode != 0:
+                    stderr_text = b"".join(stderr_chunks).decode("utf-8", errors="replace")
+                    stdout_text = b"".join(stdout_chunks).decode("utf-8", errors="replace")
                     raise QueryExecutionError(
                         f"mysql shell execution failed for file {abs_file_path}: "
-                        f"{stderr.strip() or stdout.strip()}"
+                        f"{stderr_text.strip() or stdout_text.strip()}"
                     )
         except OSError as exc:
             raise QueryExecutionError(f"Failed to open SQL file: {abs_file_path}") from exc
@@ -147,6 +192,7 @@ class BaseDBClientGateway:
             stdout=subprocess.PIPE,
             stderr=subprocess.PIPE,
             text=True,
+            errors="replace",
             env=self.env,
         )
         if result.returncode != 0:

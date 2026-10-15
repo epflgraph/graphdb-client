@@ -66,7 +66,11 @@ class ImportOperations:
         all_sql_files = adapter.filesystem.list_sql_files(table_folder, compress=compress)
         data_sql_files = self.ddl_policy.filter_data_sql_files(all_sql_files)
 
-        for file_path in tqdm(data_sql_files, unit="offset"):
+        for file_path in tqdm(
+            data_sql_files,
+            desc=f"⚙️  Table: {table_folder.name}",
+            unit="offset",
+        ):
             table_name = file_path.parent.name
             self._execute_data_file(adapter, schema_name, file_path, table_name, ignore_existing)
 
@@ -104,6 +108,8 @@ class ImportOperations:
         verbose: bool = False,
         compress: bool = False,
     ) -> None:
+        table_name = os.path.basename(input_folder)
+        sysmsg.info(f"Importing table '{schema_name}.{table_name}'")
         self.import_create_table(
             env_name,
             schema_name,
@@ -134,14 +140,16 @@ class ImportOperations:
         compress: bool = False,
     ) -> None:
         adapter: EnvironmentPort = self.registry.get(env_name)
+        input_path = Path(input_folder)
+        if not input_path.is_dir():
+            raise FileNotFoundError(f"Import input folder not found: {input_path}")
+
         if not adapter.database.database_exists(schema_name):
             adapter.database.create_database(schema_name)
 
-        table_folders = [
-            Path(p)
-            for p in sorted(os.listdir(input_folder))
-            if (Path(input_folder) / p).is_dir()
-        ]
+        # Enumerate table folders as fully-qualified paths so downstream imports
+        # never resolve SQL files against the process working directory.
+        table_folders = [p for p in sorted(input_path.iterdir()) if p.is_dir()]
         for table_folder in table_folders:
             self.import_table(
                 env_name,

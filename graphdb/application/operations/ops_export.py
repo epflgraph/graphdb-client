@@ -70,13 +70,13 @@ class ExportOperations:
                 return
 
             n_rows = max_row_id - min_row_id + 1
+            pb_desc = f"⚙️  Table: {table_name}".ljust(PBWIDTH)[:PBWIDTH]
             for offset in tqdm(
                 range(min_row_id - 1, max_row_id + 1, chunk_size),
+                desc=pb_desc,
                 unit="offset",
                 total=(n_rows // chunk_size) + 1,
             ):
-                pb_desc = f"⚙️  Table: {table_name}".ljust(PBWIDTH)[:PBWIDTH]
-
                 suffix = ".sql.gz" if compress else ".sql"
                 output_file = table_folder / f"{table_name}_{str(offset).zfill(10)}{suffix}"
                 existing_plain = output_file.with_suffix("") if compress else None
@@ -122,6 +122,7 @@ class ExportOperations:
         include_create_tables: bool = False,
         compress: bool = False,
     ) -> None:
+        sysmsg.info(f"Exporting table '{schema_name}.{table_name}'")
         if include_create_tables:
             self.export_create_table(env_name, schema_name, table_name, output_folder)
         self.export_table_data(env_name, schema_name, table_name, output_folder, filter_by, chunk_size, compress)
