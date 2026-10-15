@@ -343,6 +343,52 @@ class TestCompareOperations(unittest.TestCase):
         )
         self.assertEqual(status.tracked, [])
 
+    def test_compare_databases_by_metadata_prints_summary_counts(self):
+        # The metadata batch comparison prints an end-of-run summary that
+        # counts identical tables and breaks warnings/errors down by metric.
+        schema = FakeSchemaAdapter(tables={"src": ["users", "posts", "roles", "logs"], "dst": ["users", "posts", "roles", "logs"]})
+        registry = FakeEnvironments({
+            "src": FakeEnvironmentAdapter(schema=schema),
+            "dst": FakeEnvironmentAdapter(schema=schema),
+        })
+        service = CompareOperations(registry, status=FakeStatusMessage())
+        canned = {
+            "users": {"source": {}, "target": {}, "table": [], "df": None, "diffs": {"warning": [], "error": [], "fatal": []}},
+            "posts": {"source": {}, "target": {}, "table": [], "df": None, "diffs": {"warning": ["row_format: Dynamic != Compact"], "error": [], "fatal": []}},
+            "roles": {"source": {}, "target": {}, "table": [], "df": None, "diffs": {"warning": [], "error": ["engine: InnoDB != MyISAM"], "fatal": []}},
+            "logs": {"source": None, "target": None, "table": None, "df": None, "diffs": {"fatal": ["missing_or_unreadable_table_metadata"]}},
+        }
+        with patch.object(service, "compare_tables_by_metadata", side_effect=lambda *a, **k: canned[a[4]]):
+            with patch("builtins.print") as mock_print:
+                results = service.compare_databases_by_metadata("src", "src", "dst", "dst", ignore_warnings=True)
+        printed = " ".join(str(call) for call in mock_print.call_args_list)
+        self.assertIn("Comparison summary", printed)
+        self.assertIn("Tables compared .......... 4", printed)
+        self.assertIn("Identical tables ......... 1", printed)
+        self.assertIn("With warnings ............ 1", printed)
+        self.assertIn("row_format ............... 1", printed)
+        self.assertIn("With errors .............. 1", printed)
+        self.assertIn("engine ................... 1", printed)
+        self.assertIn("Failed comparisons ....... 1", printed)
+        self.assertEqual(len(results), 4)
+
+    def test_compare_databases_by_metadata_prints_summary_for_fatal_results(self):
+        # Missing tables on both ends produce fatal results; the summary
+        # counts them as failed comparisons.
+        schema = FakeSchemaAdapter(tables={"src": ["users", "posts"], "dst": []})
+        registry = FakeEnvironments({
+            "src": FakeEnvironmentAdapter(schema=schema),
+            "dst": FakeEnvironmentAdapter(schema=schema),
+        })
+        service = CompareOperations(registry, status=FakeStatusMessage())
+        with patch("builtins.print") as mock_print:
+            results = service.compare_databases_by_metadata("src", "src", "dst", "dst")
+        printed = " ".join(str(call) for call in mock_print.call_args_list)
+        self.assertIn("Comparison summary", printed)
+        self.assertIn("Tables compared .......... 2", printed)
+        self.assertIn("Failed comparisons ....... 2", printed)
+        self.assertEqual(len(results), 2)
+
 
 class TestImportOperations(unittest.TestCase):
     def test_import_database_passes_fully_qualified_table_folders(self):

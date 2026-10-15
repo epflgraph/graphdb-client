@@ -16,6 +16,11 @@ from graphdb.application.ports.gateways.prt_environments import EnvironmentRegis
 from graphdb.application.ports.rendering.prt_statusmsg import StatusMessagePort
 from graphdb.domain.sql import _q
 
+# Internal Function: Format a dotted summary line for the end-of-run summaries.
+def _dotted_line(indent, label, value, width=26):
+    dots = '.' * max(1, width - len(label) - 1)
+    return f"{indent}- {label} {dots} {value}"
+
 #==================#
 # Class definition #
 #==================#
@@ -783,27 +788,22 @@ class CompareOperations:
             for c in r.get("major_changes", []):
                 major_counts[c] = major_counts.get(c, 0) + 1
 
-        # Internal Function: Format a dotted summary line.
-        def _dotted(indent, label, value, width=26):
-            dots = '.' * max(1, width - len(label) - 1)
-            return f"{indent}- {label} {dots} {value}"
-
         # Always print the summary, even when every table block is hidden
         print('')
         print('📊 Comparison summary')
-        print(_dotted('   ', 'Tables compared', n_total))
-        print(_dotted('   ', 'Flawless matches', n_flawless))
-        print(_dotted('   ', 'Empty on both ends', n_empty))
-        print(_dotted('   ', 'Failed comparisons', n_failed))
-        print(_dotted('   ', 'With new rows', n_with_new))
-        print(_dotted('   ', 'With deleted rows', n_with_deleted))
-        print(_dotted('   ', 'With mismatches', n_with_mismatch))
-        print(_dotted('   ', 'With warnings', n_with_warnings))
+        print(_dotted_line('   ', 'Tables compared', n_total))
+        print(_dotted_line('   ', 'Flawless matches', n_flawless))
+        print(_dotted_line('   ', 'Empty on both ends', n_empty))
+        print(_dotted_line('   ', 'Failed comparisons', n_failed))
+        print(_dotted_line('   ', 'With new rows', n_with_new))
+        print(_dotted_line('   ', 'With deleted rows', n_with_deleted))
+        print(_dotted_line('   ', 'With mismatches', n_with_mismatch))
+        print(_dotted_line('   ', 'With warnings', n_with_warnings))
         for w in sorted(warning_counts):
-            print(_dotted('     ', w, warning_counts[w]))
-        print(_dotted('   ', 'With major changes', n_with_major))
+            print(_dotted_line('     ', w, warning_counts[w]))
+        print(_dotted_line('   ', 'With major changes', n_with_major))
         for c in sorted(major_counts):
-            print(_dotted('     ', c, major_counts[c]))
+            print(_dotted_line('     ', c, major_counts[c]))
 
         return results
 
@@ -1200,6 +1200,41 @@ class CompareOperations:
                 ignore_warnings=ignore_warnings,
             )
             results[table_name] = result
+
+        # Aggregate the per-table results into an end-of-run summary; failed
+        # tables only carry a 'fatal' key in their diffs
+        n_total     = len(results)
+        n_identical = sum(
+            1 for r in results.values()
+            if not r["diffs"].get("warning") and not r["diffs"].get("error") and not r["diffs"].get("fatal")
+        )
+        n_warn  = sum(1 for r in results.values() if r["diffs"].get("warning"))
+        n_err   = sum(1 for r in results.values() if r["diffs"].get("error"))
+        n_fatal = sum(1 for r in results.values() if r["diffs"].get("fatal"))
+
+        # Count tables per warning metric and per error metric
+        warning_counts = {}
+        error_counts = {}
+        for r in results.values():
+            for w in r["diffs"].get("warning", []):
+                metric = w.split(":", 1)[0].strip()
+                warning_counts[metric] = warning_counts.get(metric, 0) + 1
+            for e in r["diffs"].get("error", []):
+                metric = e.split(":", 1)[0].strip()
+                error_counts[metric] = error_counts.get(metric, 0) + 1
+
+        # Always print the summary, even when table output is suppressed
+        print('')
+        print('📊 Comparison summary')
+        print(_dotted_line('   ', 'Tables compared', n_total))
+        print(_dotted_line('   ', 'Identical tables', n_identical))
+        print(_dotted_line('   ', 'With warnings', n_warn))
+        for m in sorted(warning_counts):
+            print(_dotted_line('     ', m, warning_counts[m]))
+        print(_dotted_line('   ', 'With errors', n_err))
+        for m in sorted(error_counts):
+            print(_dotted_line('     ', m, error_counts[m]))
+        print(_dotted_line('   ', 'Failed comparisons', n_fatal))
 
         self.status.success("✅ Done comparing database.")
         return results
