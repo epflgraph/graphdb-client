@@ -1,6 +1,7 @@
 import tempfile
 import unittest
 from pathlib import Path
+from unittest.mock import patch
 
 from graphdb.application.operations.ops_compare import CompareOperations
 from graphdb.application.operations.ops_connectivity import ConnectivityOperations
@@ -134,6 +135,119 @@ class TestCompareOperations(unittest.TestCase):
         )
         self.assertIn("error", result)
         self.assertIn("uid", result["error"])
+
+    # ---------------------------------------------------------------
+    # Sampling fixtures: fake schema with a 'uid' key on both sides.
+    # sample_size=4 -> round(4/2)=2 uids sampled per side, so the
+    # concatenated key set covers ('u1',) and ('u2',) on both ends.
+    # ---------------------------------------------------------------
+    FLAWLESS_SAMPLING_RESPONSES = {
+        ("SELECT `uid` FROM `src`.`users` ORDER BY RAND() LIMIT 2;", "src"): [["u1"], ["u2"]],
+        ("SELECT `uid` FROM `dst`.`users` ORDER BY RAND() LIMIT 2;", "dst"): [["u1"], ["u2"]],
+        ("SELECT `uid`, `name` FROM `src`.`users` WHERE (`uid`) IN ('u1', 'u2', 'u1', 'u2');", "src"): [["u1", "same"], ["u2", "same"]],
+        ("SELECT `uid`, `name` FROM `dst`.`users` WHERE (`uid`) IN ('u1', 'u2', 'u1', 'u2');", "dst"): [["u1", "same"], ["u2", "same"]],
+    }
+
+    MISMATCH_SAMPLING_RESPONSES = {
+        ("SELECT `uid` FROM `src`.`users` ORDER BY RAND() LIMIT 2;", "src"): [["u1"], ["u2"]],
+        ("SELECT `uid` FROM `dst`.`users` ORDER BY RAND() LIMIT 2;", "dst"): [["u1"], ["u2"]],
+        ("SELECT `uid`, `name` FROM `src`.`users` WHERE (`uid`) IN ('u1', 'u2', 'u1', 'u2');", "src"): [["u1", "source-value"], ["u2", "source-value"]],
+        ("SELECT `uid`, `name` FROM `dst`.`users` WHERE (`uid`) IN ('u1', 'u2', 'u1', 'u2');", "dst"): [["u1", "target-value"], ["u2", "target-value"]],
+    }
+
+    def _make_sampling_service(self, responses=None):
+        schema = FakeSchemaAdapter(tables={"src": ["users"], "dst": ["users"]})
+        schema.columns = {"src.users": ["uid", "name"], "dst.users": ["uid", "name"]}
+        schema.keys = {
+            "src.users": {"uid": ["uid"]},
+            "dst.users": {"uid": ["uid"]},
+        }
+        db = FakeDatabaseAdapter(responses=responses or {})
+        registry = FakeEnvironments({
+            "src": FakeEnvironmentAdapter(database=db, schema=schema),
+            "dst": FakeEnvironmentAdapter(database=db, schema=schema),
+        })
+        return CompareOperations(registry, status=FakeStatusMessage())
+
+    def test_compare_sampling_ignore_warnings_suppresses_empty_tables(self):
+        # Empty on both ends + ignore_warnings -> no output at all.
+        service = self._make_sampling_service()
+        with patch("builtins.print") as mock_print:
+            result = service.compare_tables_by_random_sampling(
+                "src", "src", "users",
+                "dst", "dst", "users",
+                sample_size=2, ignore_warnings=True,
+            )
+        mock_print.assert_not_called()
+        self.assertIn("error", result)
+        self.assertIn("No rows found", result["error"])
+
+    def test_compare_sampling_prints_empty_table_warning_by_default(self):
+        # Empty on both ends without ignore_warnings -> header + warning printed.
+        service = self._make_sampling_service()
+        with patch("builtins.print") as mock_print:
+            service.compare_tables_by_random_sampling(
+                "src", "src", "users",
+                "dst", "dst", "users",
+                sample_size=2,
+            )
+        printed = " ".join(str(call) for call in mock_print.call_args_list)
+        self.assertIn("Source table:", printed)
+        self.assertIn("No rows found", printed)
+
+    def test_compare_sampling_hide_flawless_matches_suppresses_output(self):
+        # Flawless match + hide_flawless_matches -> no output at all, but the
+        # structured result still reports the comparison stats.
+        service = self._make_sampling_service(responses=self.FLAWLESS_SAMPLING_RESPONSES)
+        with patch("builtins.print") as mock_print:
+            result = service.compare_tables_by_random_sampling(
+                "src", "src", "users",
+                "dst", "dst", "users",
+                sample_size=4, hide_flawless_matches=True,
+            )
+        mock_print.assert_not_called()
+        self.assertEqual(result["sample_size"], 2)
+        self.assertEqual(result["matched"], 2)
+        self.assertEqual(result["mismatched"], 0)
+
+    def test_compare_sampling_prints_flawless_result_by_default(self):
+        # Flawless match without hide_flawless_matches -> stats + test result printed.
+        service = self._make_sampling_service(responses=self.FLAWLESS_SAMPLING_RESPONSES)
+        with patch("builtins.print") as mock_print:
+            service.compare_tables_by_random_sampling(
+                "src", "src", "users",
+                "dst", "dst", "users",
+                sample_size=4,
+            )
+        printed = " ".join(str(call) for call in mock_print.call_args_list)
+        self.assertIn("Test result:", printed)
+        self.assertIn("Flawless match", printed)
+
+    def test_compare_sampling_hide_flawless_matches_keeps_changed_tables(self):
+        # hide_flawless_matches must not suppress tables with actual changes.
+        service = self._make_sampling_service(responses=self.MISMATCH_SAMPLING_RESPONSES)
+        with patch("builtins.print") as mock_print:
+            result = service.compare_tables_by_random_sampling(
+                "src", "src", "users",
+                "dst", "dst", "users",
+                sample_size=4, hide_flawless_matches=True,
+            )
+        printed = " ".join(str(call) for call in mock_print.call_args_list)
+        self.assertIn("Test result:", printed)
+        self.assertEqual(result["mismatched"], 2)
+
+    def test_compare_all_tables_sampling_passes_suppression_flags(self):
+        # The batch method must forward both flags to every table comparison.
+        service = self._make_sampling_service()
+        with patch("builtins.print") as mock_print:
+            results = service.compare_all_tables_by_random_sampling(
+                "src", "src",
+                "dst", "dst",
+                sample_size=2, ignore_warnings=True, hide_flawless_matches=True,
+            )
+        mock_print.assert_not_called()
+        self.assertEqual(len(results), 1)
+        self.assertIn("error", results[0])
 
 
 class TestImportOperations(unittest.TestCase):

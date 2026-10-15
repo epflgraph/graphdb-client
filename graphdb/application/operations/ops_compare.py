@@ -271,7 +271,14 @@ class CompareOperations:
         return row_set_dict
 
     # Method: Main implementation for comparing tables by random sampling
-    def compare_tables_by_random_sampling(self, source_engine_name, source_schema_name, source_table_name, target_engine_name, target_schema_name, target_table_name, sample_size=1024):
+    def compare_tables_by_random_sampling(self, source_engine_name, source_schema_name, source_table_name, target_engine_name, target_schema_name, target_table_name, sample_size=1024, ignore_warnings=False, hide_flawless_matches=False):
+        """
+        Compare a table across two MySQL servers/schemas by random uid sampling.
+
+        If ignore_warnings=True, tables that are empty on both the source and
+        the target side produce no output at all. If hide_flawless_matches=True,
+        tables whose sampled rows match flawlessly produce no output at all.
+        """
 
         # Structured result returned to callers (CLI, tests, scripts).
         result = {
@@ -286,6 +293,18 @@ class CompareOperations:
             "mismatch_examples": [],
         }
 
+        # Internal Function: Finalise the structured result returned to callers.
+        def _finalize_result():
+            result.update({
+                "sample_size": sample_size,
+                "matched": stats['match'],
+                "new_rows": stats['new_rows'],
+                "deleted_rows": stats['deleted_rows'],
+                "mismatched": stats['mismatch'],
+                "mismatch_examples": [{"uid": uid} for uid in mismatch_examples[:5]],
+            })
+            return result
+
         # Check if the source table exists
         if not self.envs.get(source_engine_name).table.table_exists(source_schema_name, source_table_name):
             result["error"] = f"Table {source_schema_name}.{source_table_name} does not exist in '{source_engine_name}'."
@@ -298,14 +317,25 @@ class CompareOperations:
             self.status.error(f"🚨 {result['error']}")
             return result
 
-        # Print a clear header for this table comparison
-        header_label = f" {target_table_name} "
-        print('')
-        print('╔' + '═' * 78 + '╗')
-        print('║' + header_label.center(78) + '║')
-        print('╚' + '═' * 78 + '╝')
-        print(f"Source table: {source_schema_name}.{source_table_name}")
-        print(f"Target table: {target_schema_name}.{target_table_name}")
+        # Lazily print the table comparison header: it is only emitted right
+        # before the first printed output for this table, so that
+        # 'ignore_warnings' and 'hide_flawless_matches' can suppress the
+        # entire block for empty or flawless comparisons.
+        header_printed = False
+
+        # Internal Function: Print the table comparison header once.
+        def _print_header():
+            nonlocal header_printed
+            if header_printed:
+                return
+            header_label = f" {target_table_name} "
+            print('')
+            print('╔' + '═' * 78 + '╗')
+            print('║' + header_label.center(78) + '║')
+            print('╚' + '═' * 78 + '╝')
+            print(f"Source table: {source_schema_name}.{source_table_name}")
+            print(f"Target table: {target_schema_name}.{target_table_name}")
+            header_printed = True
 
         #------------------------------------------#
         # Generate the SQL query for sample tuples #
@@ -317,12 +347,14 @@ class CompareOperations:
         source_keys = self.envs.get(source_engine_name).key.get_keys(source_schema_name, source_table_name)
         if 'uid' not in source_keys:
             result["error"] = f"Table {source_schema_name}.{source_table_name} does not have a 'uid' unique key. Cannot compare by uid."
+            _print_header()
             self.status.error(f"🚨 {result['error']}")
             return result
 
         target_keys = self.envs.get(target_engine_name).key.get_keys(target_schema_name, target_table_name)
         if 'uid' not in target_keys:
             result["error"] = f"Table {target_schema_name}.{target_table_name} does not have a 'uid' unique key. Cannot compare by uid."
+            _print_header()
             self.status.error(f"🚨 {result['error']}")
             return result
 
@@ -333,6 +365,7 @@ class CompareOperations:
                 f"UID key mismatch: source uses {source_uid_columns}, target uses {target_uid_columns}. "
                 "Cannot compare tables with different uid keys."
             )
+            _print_header()
             self.status.error(f"🚨 {result['error']}")
             return result
 
@@ -344,16 +377,21 @@ class CompareOperations:
         expected_uid_len = len(source_uid_columns)
         bad_uid_count = sum(1 for uid in random_key_set if len(uid) != expected_uid_len)
         if bad_uid_count:
+            _print_header()
             self.status.error(
                 f"🚨 Found {bad_uid_count} uid tuple(s) with unexpected arity (expected {expected_uid_len} columns). "
                 "Skipping mismatched tuples."
             )
             random_key_set = [uid for uid in random_key_set if len(uid) == expected_uid_len]
 
-        # Return if no rows found
+        # Return if no rows found in either source or target table
         if len(random_key_set) == 0:
             result["error"] = "No rows found in either source or target table for comparison."
-            print(f"⚠️  {result['error']}")
+            # With ignore_warnings=True, skip the entire output block for
+            # tables that are empty on both ends
+            if not ignore_warnings:
+                _print_header()
+                print(f"⚠️  {result['error']}")
             return result
 
         # Get the rows by uid set (source and target)
@@ -536,6 +574,18 @@ class CompareOperations:
         if stats['percent_match'] == 100:
             test_results['flawless_match_test'] = True
 
+        # A flawless match means every sampled shared row matched exactly,
+        # with no new rows and no deleted rows
+        is_flawless_match = (
+            test_results['flawless_match_test']
+            and stats['new_rows'] == 0
+            and stats['deleted_rows'] == 0
+        )
+
+        # Optionally suppress the entire output block for flawless matches
+        if hide_flawless_matches and is_flawless_match:
+            return _finalize_result()
+
         # Generate print colours
         if stats['percent_deleted_rows'] >= 25:
             percent_deleted_rows_colour = '\033[31m'
@@ -572,6 +622,7 @@ class CompareOperations:
             percent_set_to_null_colour = '\033[37m'
 
         # Print the stats
+        _print_header()
         print('')
         print(f" - Sample size ....... {sample_size}")
         print(f" - Existing rows ..... {stats['existing_rows']} {' '*(8-len(str(stats['existing_rows'])))} {stats['percent_existing_rows']:.1f}%")
@@ -654,22 +705,16 @@ class CompareOperations:
         else:
             print("Test result: \033[31mMajor changes detected!\033[0m")
 
-        result.update({
-            "sample_size": sample_size,
-            "matched": stats['match'],
-            "new_rows": stats['new_rows'],
-            "deleted_rows": stats['deleted_rows'],
-            "mismatched": stats['mismatch'],
-            "mismatch_examples": [{"uid": uid} for uid in mismatch_examples[:5]],
-        })
-
-        return result
+        return _finalize_result()
 
     # Method: Batch compare all tables in a database by random sampling
-    def compare_all_tables_by_random_sampling(self, source_engine_name, source_schema_name, target_engine_name, target_schema_name, sample_size=1024):
+    def compare_all_tables_by_random_sampling(self, source_engine_name, source_schema_name, target_engine_name, target_schema_name, sample_size=1024, ignore_warnings=False, hide_flawless_matches=False):
         """
         Compare all tables in a database across two MySQL servers/schemas by random sampling.
         """
+        self.status.info("🔎 Compare database by random sampling across MySQL servers.")
+        self.status.trace(f"Source ........... {source_engine_name} / {source_schema_name}")
+        self.status.trace(f"Target ........... {target_engine_name} / {target_schema_name}")
 
         # Get the list of tables in the source schema
         source_tables = self.envs.get(source_engine_name).table.get_tables(source_schema_name)
@@ -679,6 +724,7 @@ class CompareOperations:
 
         # Get the union of table names from both source and target schemas
         all_tables = sorted(set(source_tables) | set(target_tables))
+        self.status.info(f"🔢 Found {len(source_tables)} tables in source, {len(target_tables)} tables in target, {len(all_tables)} total unique tables.")
 
         # Loop over each table and compare by random sampling
         results = []
@@ -686,7 +732,9 @@ class CompareOperations:
             result = self.compare_tables_by_random_sampling(
                 source_engine_name, source_schema_name, table_name,
                 target_engine_name, target_schema_name, table_name,
-                sample_size=sample_size
+                sample_size           = sample_size,
+                ignore_warnings       = ignore_warnings,
+                hide_flawless_matches = hide_flawless_matches,
             )
             results.append(result)
 

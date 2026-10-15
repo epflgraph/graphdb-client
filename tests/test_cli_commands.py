@@ -178,6 +178,7 @@ class TestCliCompareCommand(unittest.TestCase):
             ignore_warnings=False,
             random_sampling=False,
             sample_size=1024,
+            hide_flawless_matches=False,
         )
         with patch("builtins.print"):
             cmd_compare(args)

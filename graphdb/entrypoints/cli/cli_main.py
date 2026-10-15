@@ -267,9 +267,10 @@ def _cmd_compare(
     to_schema: str = typer.Option(..., "--to_schema", help="Name of the target database/schema to compare."),
     table_name: Optional[str] = typer.Option(None, "--table_name", help="Name of the table to compare (if comparing only one table)."),
     row_count_tolerance: float = typer.Option(0.10, "--row_count_tolerance", help="Relative row-count difference below which a mismatch is reported as a warning instead of an error (default: 0.10 for 10%)."),
-    ignore_warnings: bool = typer.Option(False, "--ignore_warnings", "-iw", help="Skip output for tables that have only warnings and no errors."),
+    ignore_warnings: bool = typer.Option(False, "--ignore_warnings", "-iw", help="Skip output for tables with only warnings (metadata mode) or empty on both ends (random sampling mode)."),
     random_sampling: bool = typer.Option(False, "--random_sampling", "-rs", help="Compare tables by random sampling instead of metadata."),
     sample_size: int = typer.Option(1024, "--sample_size", "-N", help="Number of rows to sample when using random sampling (default: 1024)."),
+    hide_flawless_matches: bool = typer.Option(False, "--hide-flawless-matches", "--hide_flawless_matches", "-hfm", help="Skip output for tables whose sampled rows match flawlessly (random sampling mode)."),
 ) -> None:
     cmd_compare(
         argparse.Namespace(
@@ -283,6 +284,7 @@ def _cmd_compare(
             ignore_warnings=ignore_warnings,
             random_sampling=random_sampling,
             sample_size=sample_size,
+            hide_flawless_matches=hide_flawless_matches,
         )
     )
 

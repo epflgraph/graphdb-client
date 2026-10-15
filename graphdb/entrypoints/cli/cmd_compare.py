@@ -16,7 +16,9 @@ def cmd_compare(args):
                 args.to_env,
                 args.to_schema,
                 args.table_name,
-                sample_size=args.sample_size,
+                sample_size           = args.sample_size,
+                ignore_warnings       = args.ignore_warnings,
+                hide_flawless_matches = args.hide_flawless_matches,
             )
         else:
             service.compare_all_tables_by_random_sampling(
@@ -24,7 +26,9 @@ def cmd_compare(args):
                 args.from_schema,
                 args.to_env,
                 args.to_schema,
-                sample_size=args.sample_size,
+                sample_size           = args.sample_size,
+                ignore_warnings       = args.ignore_warnings,
+                hide_flawless_matches = args.hide_flawless_matches,
             )
     elif args.table_name:
         service.compare_tables_by_metadata(

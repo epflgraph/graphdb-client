@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import copy
 from contextlib import contextmanager
 from pathlib import Path
 from typing import Any, Dict, Iterator, List, Optional, Tuple, Union
@@ -31,7 +32,9 @@ class FakeDatabaseAdapter:
         self.executed.append({"query": query, "schema": schema_name, "params": params})
         key = (query.strip(), schema_name)
         if key in self.responses:
-            return self.responses[key]
+            # Return a copy: a real database returns a fresh result set per
+            # query, so callers may safely mutate the returned rows.
+            return copy.deepcopy(self.responses[key])
         return []
 
     def execute_in_shell(self, query: str, database: Optional[str] = None, query_id: Optional[str] = None) -> None:
