@@ -296,12 +296,15 @@ class CompareOperations:
         # Internal Function: Finalise the structured result returned to callers.
         def _finalize_result():
             result.update({
-                "sample_size": sample_size,
-                "matched": stats['match'],
-                "new_rows": stats['new_rows'],
-                "deleted_rows": stats['deleted_rows'],
-                "mismatched": stats['mismatch'],
+                "sample_size"      : sample_size,
+                "matched"          : stats['match'],
+                "new_rows"         : stats['new_rows'],
+                "deleted_rows"     : stats['deleted_rows'],
+                "mismatched"       : stats['mismatch'],
                 "mismatch_examples": [{"uid": uid} for uid in mismatch_examples[:5]],
+                "flawless_match"   : is_flawless_match,
+                "warnings"         : sorted(set(warning_types)),
+                "major_changes"    : sorted(set(error_types)),
             })
             return result
 
@@ -387,6 +390,7 @@ class CompareOperations:
         # Return if no rows found in either source or target table
         if len(random_key_set) == 0:
             result["error"] = "No rows found in either source or target table for comparison."
+            result["empty_comparison"] = True
             # With ignore_warnings=True, skip the entire output block for
             # tables that are empty on both ends
             if not ignore_warnings:
@@ -426,6 +430,11 @@ class CompareOperations:
         # Initialise stacks
         mismatch_changes_stack = []
         mismatch_examples = []
+
+        # Initialise the warning and major change type stacks; the batch
+        # comparison aggregates them into an end-of-run summary
+        warning_types = []
+        error_types = []
 
         # Initialise score and rank differences
         score_rank_diffs = {
@@ -590,9 +599,11 @@ class CompareOperations:
         if stats['percent_deleted_rows'] >= 25:
             percent_deleted_rows_colour = '\033[31m'
             test_results['deleted_rows_test'] = False
+            error_types.append('deleted_rows')
         elif stats['percent_deleted_rows'] >= 10:
             percent_deleted_rows_colour = '\033[33m'
             test_results['warning_flag'] = True
+            warning_types.append('deleted_rows')
         else:
             percent_deleted_rows_colour = '\033[37m'
 
@@ -606,18 +617,22 @@ class CompareOperations:
         if stats['percent_custom_column_mismatch'] >= 10:
             percent_custom_column_mismatch_colour = '\033[31m'
             test_results['custom_column_mismatch_test'] = False
+            error_types.append('custom_column_mismatch')
         elif stats['percent_custom_column_mismatch'] >= 5:
             percent_custom_column_mismatch_colour = '\033[33m'
             test_results['warning_flag'] = True
+            warning_types.append('custom_column_mismatch')
         else:
             percent_custom_column_mismatch_colour = '\033[37m'
 
         if stats['percent_set_to_null'] >= 10:
             percent_set_to_null_colour = '\033[31m'
             test_results['set_to_null_test'] = False
+            error_types.append('set_to_null')
         elif stats['percent_set_to_null'] >= 5:
             percent_set_to_null_colour = '\033[33m'
             test_results['warning_flag'] = True
+            warning_types.append('set_to_null')
         else:
             percent_set_to_null_colour = '\033[37m'
 
@@ -655,9 +670,11 @@ class CompareOperations:
                     med_val = np.median(score_rank_diffs[k])
                     if   k in ['semantic_score', 'degree_score'] and abs(med_val)>=0.2:
                         test_results['median_score_diff_test'] = False
+                        error_types.append('median_score_diff')
                         print(f"\033[31m\t- {k}: {med_val:.2f}\033[0m")
                     elif k in ['semantic_score', 'degree_score'] and abs(med_val)>=0.1:
                         test_results['warning_flag'] = True
+                        warning_types.append('median_score_diff')
                         print(f"\033[33m\t- {k}: {med_val:.2f}\033[0m")
                     else:
                         print(f"\t- {k}: {med_val:.2f}")
@@ -665,6 +682,7 @@ class CompareOperations:
 
         if len(column_missing_or_renamed_list) > 0:
             test_results['column_missing_or_renamed_test'] = False
+            error_types.append('column_missing_or_renamed')
             print(f"\033[31mColumn mismatch(s) detected:\033[0m {column_missing_or_renamed_list}")
             print('')
 
@@ -726,9 +744,16 @@ class CompareOperations:
         all_tables = sorted(set(source_tables) | set(target_tables))
         self.status.info(f"🔢 Found {len(source_tables)} tables in source, {len(target_tables)} tables in target, {len(all_tables)} total unique tables.")
 
+        # With both suppression flags given, wrap the table loop in a progress
+        # bar, since no per-table output is produced for hidden comparisons
+        if ignore_warnings and hide_flawless_matches:
+            table_iterator = self.status.track(all_tables, description="Comparing tables")
+        else:
+            table_iterator = all_tables
+
         # Loop over each table and compare by random sampling
         results = []
-        for table_name in all_tables:
+        for table_name in table_iterator:
             result = self.compare_tables_by_random_sampling(
                 source_engine_name, source_schema_name, table_name,
                 target_engine_name, target_schema_name, table_name,
@@ -737,6 +762,48 @@ class CompareOperations:
                 hide_flawless_matches = hide_flawless_matches,
             )
             results.append(result)
+
+        # Aggregate the per-table results into an end-of-run summary
+        n_total         = len(results)
+        n_flawless      = sum(1 for r in results if r.get("flawless_match"))
+        n_empty         = sum(1 for r in results if r.get("empty_comparison"))
+        n_failed        = sum(1 for r in results if r.get("error") and not r.get("empty_comparison"))
+        n_with_new      = sum(1 for r in results if r.get("new_rows", 0) > 0)
+        n_with_deleted  = sum(1 for r in results if r.get("deleted_rows", 0) > 0)
+        n_with_mismatch = sum(1 for r in results if r.get("mismatched", 0) > 0)
+        n_with_warnings = sum(1 for r in results if r.get("warnings"))
+        n_with_major    = sum(1 for r in results if r.get("major_changes"))
+
+        # Count tables per warning type and per major change type
+        warning_counts = {}
+        major_counts = {}
+        for r in results:
+            for w in r.get("warnings", []):
+                warning_counts[w] = warning_counts.get(w, 0) + 1
+            for c in r.get("major_changes", []):
+                major_counts[c] = major_counts.get(c, 0) + 1
+
+        # Internal Function: Format a dotted summary line.
+        def _dotted(indent, label, value, width=26):
+            dots = '.' * max(1, width - len(label) - 1)
+            return f"{indent}- {label} {dots} {value}"
+
+        # Always print the summary, even when every table block is hidden
+        print('')
+        print('📊 Comparison summary')
+        print(_dotted('   ', 'Tables compared', n_total))
+        print(_dotted('   ', 'Flawless matches', n_flawless))
+        print(_dotted('   ', 'Empty on both ends', n_empty))
+        print(_dotted('   ', 'Failed comparisons', n_failed))
+        print(_dotted('   ', 'With new rows', n_with_new))
+        print(_dotted('   ', 'With deleted rows', n_with_deleted))
+        print(_dotted('   ', 'With mismatches', n_with_mismatch))
+        print(_dotted('   ', 'With warnings', n_with_warnings))
+        for w in sorted(warning_counts):
+            print(_dotted('     ', w, warning_counts[w]))
+        print(_dotted('   ', 'With major changes', n_with_major))
+        for c in sorted(major_counts):
+            print(_dotted('     ', c, major_counts[c]))
 
         return results
 

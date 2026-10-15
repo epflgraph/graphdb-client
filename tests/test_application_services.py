@@ -155,19 +155,50 @@ class TestCompareOperations(unittest.TestCase):
         ("SELECT `uid`, `name` FROM `dst`.`users` WHERE (`uid`) IN ('u1', 'u2', 'u1', 'u2');", "dst"): [["u1", "target-value"], ["u2", "target-value"]],
     }
 
-    def _make_sampling_service(self, responses=None):
-        schema = FakeSchemaAdapter(tables={"src": ["users"], "dst": ["users"]})
-        schema.columns = {"src.users": ["uid", "name"], "dst.users": ["uid", "name"]}
-        schema.keys = {
-            "src.users": {"uid": ["uid"]},
-            "dst.users": {"uid": ["uid"]},
-        }
+    # sample_size=8 -> round(8/2)=4 uids sampled per side. The target has one
+    # uid ('u5') the source lacks -> 1 deleted row of 5 unique = 20% -> warning.
+    COMBINED_SUMMARY_RESPONSES = {
+        # 'users': flawless match (hidden with -hfm)
+        ("SELECT `uid` FROM `src`.`users` ORDER BY RAND() LIMIT 4;", "src"): [["u1"], ["u2"]],
+        ("SELECT `uid` FROM `dst`.`users` ORDER BY RAND() LIMIT 4;", "dst"): [["u1"], ["u2"]],
+        ("SELECT `uid`, `name` FROM `src`.`users` WHERE (`uid`) IN ('u1', 'u2', 'u1', 'u2');", "src"): [["u1", "x"], ["u2", "y"]],
+        ("SELECT `uid`, `name` FROM `dst`.`users` WHERE (`uid`) IN ('u1', 'u2', 'u1', 'u2');", "dst"): [["u1", "x"], ["u2", "y"]],
+        # 'posts': perfect on shared rows but one row deleted (20%) -> warning
+        ("SELECT `uid` FROM `src`.`posts` ORDER BY RAND() LIMIT 4;", "src"): [["u1"], ["u2"], ["u3"], ["u4"]],
+        ("SELECT `uid` FROM `dst`.`posts` ORDER BY RAND() LIMIT 4;", "dst"): [["u1"], ["u2"], ["u3"], ["u5"]],
+        ("SELECT `uid`, `name` FROM `src`.`posts` WHERE (`uid`) IN ('u1', 'u2', 'u3', 'u4', 'u1', 'u2', 'u3', 'u5');", "src"): [["u1", "a"], ["u2", "b"], ["u3", "c"], ["u4", "d"]],
+        ("SELECT `uid`, `name` FROM `dst`.`posts` WHERE (`uid`) IN ('u1', 'u2', 'u3', 'u4', 'u1', 'u2', 'u3', 'u5');", "dst"): [["u1", "a"], ["u2", "b"], ["u3", "c"], ["u5", "e"]],
+    }
+
+    def _make_sampling_service(self, responses=None, tables=("users",), status=None):
+        schema = FakeSchemaAdapter(tables={"src": list(tables), "dst": list(tables)})
+        schema.columns = {}
+        schema.keys = {}
+        for t in tables:
+            schema.columns[f"src.{t}"] = ["uid", "name"]
+            schema.columns[f"dst.{t}"] = ["uid", "name"]
+            schema.keys[f"src.{t}"] = {"uid": ["uid"]}
+            schema.keys[f"dst.{t}"] = {"uid": ["uid"]}
         db = FakeDatabaseAdapter(responses=responses or {})
         registry = FakeEnvironments({
             "src": FakeEnvironmentAdapter(database=db, schema=schema),
             "dst": FakeEnvironmentAdapter(database=db, schema=schema),
         })
-        return CompareOperations(registry, status=FakeStatusMessage())
+        return CompareOperations(registry, status=status or FakeStatusMessage())
+
+    def _tracking_status(self):
+        class _TrackingStatus(FakeStatusMessage):
+            """Spy fake that records sequences passed to the progress bar."""
+
+            def __init__(self):
+                super().__init__()
+                self.tracked = []
+
+            def track(self, sequence, description=""):
+                self.tracked.append(list(sequence))
+                return iter(sequence)
+
+        return _TrackingStatus()
 
     def test_compare_sampling_ignore_warnings_suppresses_empty_tables(self):
         # Empty on both ends + ignore_warnings -> no output at all.
@@ -209,6 +240,9 @@ class TestCompareOperations(unittest.TestCase):
         self.assertEqual(result["sample_size"], 2)
         self.assertEqual(result["matched"], 2)
         self.assertEqual(result["mismatched"], 0)
+        self.assertTrue(result["flawless_match"])
+        self.assertEqual(result["warnings"], [])
+        self.assertEqual(result["major_changes"], [])
 
     def test_compare_sampling_prints_flawless_result_by_default(self):
         # Flawless match without hide_flawless_matches -> stats + test result printed.
@@ -235,9 +269,12 @@ class TestCompareOperations(unittest.TestCase):
         printed = " ".join(str(call) for call in mock_print.call_args_list)
         self.assertIn("Test result:", printed)
         self.assertEqual(result["mismatched"], 2)
+        self.assertFalse(result["flawless_match"])
+        self.assertEqual(result["major_changes"], ["custom_column_mismatch"])
 
     def test_compare_all_tables_sampling_passes_suppression_flags(self):
-        # The batch method must forward both flags to every table comparison.
+        # The batch method must forward both flags to every table comparison:
+        # per-table blocks stay hidden while the end-of-run summary still prints.
         service = self._make_sampling_service()
         with patch("builtins.print") as mock_print:
             results = service.compare_all_tables_by_random_sampling(
@@ -245,9 +282,66 @@ class TestCompareOperations(unittest.TestCase):
                 "dst", "dst",
                 sample_size=2, ignore_warnings=True, hide_flawless_matches=True,
             )
-        mock_print.assert_not_called()
+        printed = " ".join(str(call) for call in mock_print.call_args_list)
+        self.assertIn("Comparison summary", printed)
+        self.assertIn("Tables compared", printed)
+        self.assertIn("Empty on both ends", printed)
+        self.assertNotIn("Source table:", printed)
         self.assertEqual(len(results), 1)
         self.assertIn("error", results[0])
+        self.assertTrue(results[0]["empty_comparison"])
+
+    def test_compare_all_tables_sampling_prints_summary_counts(self):
+        # One flawless table (hidden) and one table with a deleted-rows warning.
+        service = self._make_sampling_service(
+            responses=self.COMBINED_SUMMARY_RESPONSES,
+            tables=("users", "posts"),
+        )
+        with patch("builtins.print") as mock_print:
+            results = service.compare_all_tables_by_random_sampling(
+                "src", "src",
+                "dst", "dst",
+                sample_size=8, ignore_warnings=True, hide_flawless_matches=True,
+            )
+        printed = " ".join(str(call) for call in mock_print.call_args_list)
+        self.assertIn("Comparison summary", printed)
+        self.assertIn("Tables compared .......... 2", printed)
+        self.assertIn("Flawless matches ......... 1", printed)
+        self.assertIn("With deleted rows ........ 1", printed)
+        self.assertIn("With warnings ............ 1", printed)
+        self.assertIn("deleted_rows ............. 1", printed)
+        self.assertIn("With major changes ....... 0", printed)
+        # The flawless block stays hidden; the changed block still prints.
+        self.assertNotIn("Source table: src.users", printed)
+        self.assertIn("Source table: src.posts", printed)
+        # Structured per-table results carry the new summary fields.
+        by_table = {r["table"]: r for r in results}
+        self.assertTrue(by_table["users"]["flawless_match"])
+        self.assertEqual(by_table["users"]["warnings"], [])
+        self.assertEqual(by_table["posts"]["warnings"], ["deleted_rows"])
+        self.assertEqual(by_table["posts"]["major_changes"], [])
+
+    def test_compare_all_tables_sampling_shows_progress_bar_with_both_flags(self):
+        # Both suppression flags -> the table loop is wrapped in a progress bar.
+        status = self._tracking_status()
+        service = self._make_sampling_service(status=status)
+        service.compare_all_tables_by_random_sampling(
+            "src", "src",
+            "dst", "dst",
+            sample_size=2, ignore_warnings=True, hide_flawless_matches=True,
+        )
+        self.assertEqual(status.tracked, [["users"]])
+
+    def test_compare_all_tables_sampling_skips_progress_bar_without_both_flags(self):
+        # Without both flags the plain loop is used (no progress bar).
+        status = self._tracking_status()
+        service = self._make_sampling_service(status=status)
+        service.compare_all_tables_by_random_sampling(
+            "src", "src",
+            "dst", "dst",
+            sample_size=2, ignore_warnings=True,
+        )
+        self.assertEqual(status.tracked, [])
 
 
 class TestImportOperations(unittest.TestCase):
