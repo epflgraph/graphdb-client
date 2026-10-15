@@ -16,9 +16,12 @@ from graphdb.application.ports.gateways.prt_environments import EnvironmentRegis
 from graphdb.application.ports.rendering.prt_statusmsg import StatusMessagePort
 from graphdb.domain.sql import _q
 
-# Internal Function: Format a dotted summary line for the end-of-run summaries.
-def _dotted_line(indent, label, value, width=26):
+# Internal Function: Format a dotted summary line, with a percentage of total.
+def _dotted_line(indent, label, value, total=None, width=26):
     dots = '.' * max(1, width - len(label) - 1)
+    if total:
+        percent = value / total * 100
+        return f"{indent}- {label} {dots} {value} {' '*(8-len(str(value)))} {percent:.1f}%"
     return f"{indent}- {label} {dots} {value}"
 
 #==================#
@@ -749,9 +752,9 @@ class CompareOperations:
         all_tables = sorted(set(source_tables) | set(target_tables))
         self.status.info(f"🔢 Found {len(source_tables)} tables in source, {len(target_tables)} tables in target, {len(all_tables)} total unique tables.")
 
-        # With both suppression flags given, wrap the table loop in a progress
+        # With any suppression flag given, wrap the table loop in a progress
         # bar, since no per-table output is produced for hidden comparisons
-        if ignore_warnings and hide_flawless_matches:
+        if ignore_warnings or hide_flawless_matches:
             table_iterator = self.status.track(all_tables, description="Comparing tables")
         else:
             table_iterator = all_tables
@@ -791,19 +794,19 @@ class CompareOperations:
         # Always print the summary, even when every table block is hidden
         print('')
         print('📊 Comparison summary')
-        print(_dotted_line('   ', 'Tables compared', n_total))
-        print(_dotted_line('   ', 'Flawless matches', n_flawless))
-        print(_dotted_line('   ', 'Empty on both ends', n_empty))
-        print(_dotted_line('   ', 'Failed comparisons', n_failed))
-        print(_dotted_line('   ', 'With new rows', n_with_new))
-        print(_dotted_line('   ', 'With deleted rows', n_with_deleted))
-        print(_dotted_line('   ', 'With mismatches', n_with_mismatch))
-        print(_dotted_line('   ', 'With warnings', n_with_warnings))
+        print(_dotted_line('   ', 'Tables compared', n_total, total=n_total))
+        print(_dotted_line('   ', 'Flawless matches', n_flawless, total=n_total))
+        print(_dotted_line('   ', 'Empty on both ends', n_empty, total=n_total))
+        print(_dotted_line('   ', 'Failed comparisons', n_failed, total=n_total))
+        print(_dotted_line('   ', 'With new rows', n_with_new, total=n_total))
+        print(_dotted_line('   ', 'With deleted rows', n_with_deleted, total=n_total))
+        print(_dotted_line('   ', 'With mismatches', n_with_mismatch, total=n_total))
+        print(_dotted_line('   ', 'With warnings', n_with_warnings, total=n_total))
         for w in sorted(warning_counts):
-            print(_dotted_line('     ', w, warning_counts[w]))
-        print(_dotted_line('   ', 'With major changes', n_with_major))
+            print(_dotted_line('     ', w, warning_counts[w], total=n_total))
+        print(_dotted_line('   ', 'With major changes', n_with_major, total=n_total))
         for c in sorted(major_counts):
-            print(_dotted_line('     ', c, major_counts[c]))
+            print(_dotted_line('     ', c, major_counts[c], total=n_total))
 
         return results
 
@@ -1190,8 +1193,15 @@ class CompareOperations:
         all_tables = sorted(source_tables.union(target_tables))
         self.status.info(f"🔢 Found {len(source_tables)} tables in source, {len(target_tables)} tables in target, {len(all_tables)} total unique tables.")
 
+        # With the suppression flag given, wrap the table loop in a progress
+        # bar, since identical tables produce no output for hidden comparisons
+        if ignore_warnings:
+            table_iterator = self.status.track(all_tables, description="Comparing tables")
+        else:
+            table_iterator = all_tables
+
         results = {}
-        for table_name in all_tables:
+        for table_name in table_iterator:
             result = self.compare_tables_by_metadata(
                 source_engine_name, source_schema_name,
                 target_engine_name, target_schema_name,
@@ -1226,15 +1236,15 @@ class CompareOperations:
         # Always print the summary, even when table output is suppressed
         print('')
         print('📊 Comparison summary')
-        print(_dotted_line('   ', 'Tables compared', n_total))
-        print(_dotted_line('   ', 'Identical tables', n_identical))
-        print(_dotted_line('   ', 'With warnings', n_warn))
+        print(_dotted_line('   ', 'Tables compared', n_total, total=n_total))
+        print(_dotted_line('   ', 'Identical tables', n_identical, total=n_total))
+        print(_dotted_line('   ', 'With warnings', n_warn, total=n_total))
         for m in sorted(warning_counts):
-            print(_dotted_line('     ', m, warning_counts[m]))
-        print(_dotted_line('   ', 'With errors', n_err))
+            print(_dotted_line('     ', m, warning_counts[m], total=n_total))
+        print(_dotted_line('   ', 'With errors', n_err, total=n_total))
         for m in sorted(error_counts):
-            print(_dotted_line('     ', m, error_counts[m]))
-        print(_dotted_line('   ', 'Failed comparisons', n_fatal))
+            print(_dotted_line('     ', m, error_counts[m], total=n_total))
+        print(_dotted_line('   ', 'Failed comparisons', n_fatal, total=n_total))
 
         self.status.success("✅ Done comparing database.")
         return results

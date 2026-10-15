@@ -305,12 +305,12 @@ class TestCompareOperations(unittest.TestCase):
             )
         printed = " ".join(str(call) for call in mock_print.call_args_list)
         self.assertIn("Comparison summary", printed)
-        self.assertIn("Tables compared .......... 2", printed)
-        self.assertIn("Flawless matches ......... 1", printed)
-        self.assertIn("With deleted rows ........ 1", printed)
-        self.assertIn("With warnings ............ 1", printed)
-        self.assertIn("deleted_rows ............. 1", printed)
-        self.assertIn("With major changes ....... 0", printed)
+        self.assertIn("Tables compared .......... 2         100.0%", printed)
+        self.assertIn("Flawless matches ......... 1         50.0%", printed)
+        self.assertIn("With deleted rows ........ 1         50.0%", printed)
+        self.assertIn("With warnings ............ 1         50.0%", printed)
+        self.assertIn("deleted_rows ............. 1         50.0%", printed)
+        self.assertIn("With major changes ....... 0         0.0%", printed)
         # The flawless block stays hidden; the changed block still prints.
         self.assertNotIn("Source table: src.users", printed)
         self.assertIn("Source table: src.posts", printed)
@@ -332,14 +332,36 @@ class TestCompareOperations(unittest.TestCase):
         )
         self.assertEqual(status.tracked, [["users"]])
 
-    def test_compare_all_tables_sampling_skips_progress_bar_without_both_flags(self):
-        # Without both flags the plain loop is used (no progress bar).
+    def test_compare_all_tables_sampling_shows_progress_bar_with_ignore_warnings(self):
+        # -iw alone hides empty tables -> the table loop gets a progress bar.
         status = self._tracking_status()
         service = self._make_sampling_service(status=status)
         service.compare_all_tables_by_random_sampling(
             "src", "src",
             "dst", "dst",
             sample_size=2, ignore_warnings=True,
+        )
+        self.assertEqual(status.tracked, [["users"]])
+
+    def test_compare_all_tables_sampling_shows_progress_bar_with_hide_flawless(self):
+        # -hfm alone hides flawless tables -> the table loop gets a progress bar.
+        status = self._tracking_status()
+        service = self._make_sampling_service(status=status)
+        service.compare_all_tables_by_random_sampling(
+            "src", "src",
+            "dst", "dst",
+            sample_size=2, ignore_warnings=False, hide_flawless_matches=True,
+        )
+        self.assertEqual(status.tracked, [["users"]])
+
+    def test_compare_all_tables_sampling_skips_progress_bar_without_flags(self):
+        # Without any suppression flags the plain loop is used (no progress bar).
+        status = self._tracking_status()
+        service = self._make_sampling_service(status=status)
+        service.compare_all_tables_by_random_sampling(
+            "src", "src",
+            "dst", "dst",
+            sample_size=2,
         )
         self.assertEqual(status.tracked, [])
 
@@ -363,13 +385,13 @@ class TestCompareOperations(unittest.TestCase):
                 results = service.compare_databases_by_metadata("src", "src", "dst", "dst", ignore_warnings=True)
         printed = " ".join(str(call) for call in mock_print.call_args_list)
         self.assertIn("Comparison summary", printed)
-        self.assertIn("Tables compared .......... 4", printed)
-        self.assertIn("Identical tables ......... 1", printed)
-        self.assertIn("With warnings ............ 1", printed)
-        self.assertIn("row_format ............... 1", printed)
-        self.assertIn("With errors .............. 1", printed)
-        self.assertIn("engine ................... 1", printed)
-        self.assertIn("Failed comparisons ....... 1", printed)
+        self.assertIn("Tables compared .......... 4         100.0%", printed)
+        self.assertIn("Identical tables ......... 1         25.0%", printed)
+        self.assertIn("With warnings ............ 1         25.0%", printed)
+        self.assertIn("row_format ............... 1         25.0%", printed)
+        self.assertIn("With errors .............. 1         25.0%", printed)
+        self.assertIn("engine ................... 1         25.0%", printed)
+        self.assertIn("Failed comparisons ....... 1         25.0%", printed)
         self.assertEqual(len(results), 4)
 
     def test_compare_databases_by_metadata_prints_summary_for_fatal_results(self):
@@ -388,6 +410,26 @@ class TestCompareOperations(unittest.TestCase):
         self.assertIn("Tables compared .......... 2", printed)
         self.assertIn("Failed comparisons ....... 2", printed)
         self.assertEqual(len(results), 2)
+
+    def test_compare_databases_by_metadata_shows_progress_bar_with_ignore_warnings(self):
+        # -iw hides identical tables -> the table loop gets a progress bar.
+        status = self._tracking_status()
+        service = self._make_sampling_service(status=status)
+        canned = {"source": {}, "target": {}, "table": [], "df": None, "diffs": {"warning": [], "error": [], "fatal": []}}
+        with patch.object(service, "compare_tables_by_metadata", side_effect=lambda *a, **k: canned):
+            with patch("builtins.print"):
+                service.compare_databases_by_metadata("src", "src", "dst", "dst", ignore_warnings=True)
+        self.assertEqual(status.tracked, [["users"]])
+
+    def test_compare_databases_by_metadata_skips_progress_bar_without_ignore_warnings(self):
+        # Without the suppression flag the plain loop is used (no progress bar).
+        status = self._tracking_status()
+        service = self._make_sampling_service(status=status)
+        canned = {"source": {}, "target": {}, "table": [], "df": None, "diffs": {"warning": [], "error": [], "fatal": []}}
+        with patch.object(service, "compare_tables_by_metadata", side_effect=lambda *a, **k: canned):
+            with patch("builtins.print"):
+                service.compare_databases_by_metadata("src", "src", "dst", "dst")
+        self.assertEqual(status.tracked, [])
 
 
 class TestImportOperations(unittest.TestCase):
