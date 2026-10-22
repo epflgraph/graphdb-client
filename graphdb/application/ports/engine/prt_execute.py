@@ -1,7 +1,8 @@
 from __future__ import annotations
 
-from typing import Any, Protocol
+from typing import Any, Protocol, runtime_checkable
 
+@runtime_checkable
 class EngineExecutePort(Protocol):
     """Port interface implemented by matching adapter."""
     def execute_query(self, engine_name, query, schema_name = None, params = None, commit = False, return_exception = False, verbose = False, query_id = None): ...

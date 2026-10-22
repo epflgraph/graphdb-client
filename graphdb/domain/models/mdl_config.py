@@ -160,7 +160,10 @@ class GraphDBConfig:
         override = _resolve_dotenv_override()
         if override:
             return override
-        return Path(__file__).resolve().parents[2] / "config.yaml"
+
+        # Module sits three levels below the repo root (graphdb/domain/models/),
+        # so the package-relative fallback needs parents[3].
+        return Path(__file__).resolve().parents[3] / "config.yaml"
 
     @classmethod
     def default_paths(cls) -> list[Path]:
@@ -171,8 +174,11 @@ class GraphDBConfig:
             candidates.append(override)
 
         candidates.append(Path.cwd() / "config.yaml")
+
+        # /app/config.yaml covers docker deployments; the package-relative
+        # candidate (parents[3], three levels below the repo root) is last.
         candidates.append(Path("/app/config.yaml"))
-        candidates.append(Path(__file__).resolve().parents[2] / "config.yaml")
+        candidates.append(Path(__file__).resolve().parents[3] / "config.yaml")
 
         unique: list[Path] = []
         seen: set[str] = set()

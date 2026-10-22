@@ -80,9 +80,10 @@ app.add_typer(config_app, name="config")
 
 @config_app.command("print", help="Print out config options.")
 def _cmd_config_print(
+    ctx: typer.Context,
     config: Optional[str] = typer.Option(None, "--config", help="Path to a specific config file (overrides GRAPHDB_CONFIG/.env)."),
 ) -> None:
-    cmd_config(argparse.Namespace(ctx=None, config_path=config))
+    cmd_config(argparse.Namespace(ctx=_cli_context(ctx), config_path=config))
 
 
 # -----------------------------------------------------------------------------

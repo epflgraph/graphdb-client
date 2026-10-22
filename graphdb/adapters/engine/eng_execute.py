@@ -1,40 +1,71 @@
+# graphdb-client/graphdb/adapters/engine/eng_execute.py
+"""Full engine-name-addressed query execution adapter for a single environment.
+
+Implements the complete ``EngineExecutePort`` surface (plus the thin
+``SQLAlchemyQueryExecutorPort`` methods) by composing two capabilities of one
+environment: the SQLAlchemy engine for in-process SQL and the MySQL CLI
+gateway for shell/file transport. The chunking, safe-insert and upsert
+SQL-building logic is carried over verbatim from the pre-hexagonal adapter
+so bulk-data behavior cannot drift between consumers.
+
+``engine_name`` arguments are kept for port compatibility with the legacy
+multi-environment facade; the adapter enforces that they match the
+environment it was built for, turning wrong-environment bugs into loud
+errors instead of silent cross-environment writes.
+"""
 from __future__ import annotations
 
+# Heavy data/rendering imports are intentional: verbose mode renders SQL and
+# evaluation DataFrames through the shared renderers, and the CLI gateway
+# owns all shell/file transport.
 import json
 import os
-import subprocess
-import tempfile
-import types
-from typing import Any, Dict, Optional
-
+from typing import Any, Dict, List, Optional, Tuple, Union
 import pandas as pd
 from loguru import logger as sysmsg
 from sqlalchemy import text
 from sqlalchemy.dialects.mysql import dialect as MySQLDialect
+from sqlalchemy.engine import Engine
 from sqlalchemy.exc import DataError, IntegrityError, SQLAlchemyError
 from tqdm import tqdm
-
-from graphdb.adapters.rendering.rdr_print import print_colour
+from graphdb.adapters.gateways.gtw_dbclient import BaseDBClientGateway
 from graphdb.adapters.rendering.rdr_dataframe import print_dataframe
+from graphdb.adapters.rendering.rdr_print import print_colour
 from graphdb.adapters.rendering.rdr_sqlquery import print_sql
 
-
+#==================#
+# Class Definition #
+#==================#
 class EngineExecuteAdapter:
-    """Adapter for SQL query execution operations."""
+    """Engine-name-addressed executor composing the SQLAlchemy engine and the MySQL CLI gateway."""
 
-    def __init__(self, graphdb: Any) -> None:
-        self._graphdb = graphdb
+    # Internal Method: Store the environment's engine and CLI gateway for later use.
+    def __init__(self, engine: Engine, mysql_client: BaseDBClientGateway, env_name: str = "default") -> None:
+        self.engine = engine
+        self._mysql_client = mysql_client
+        self.env_name = env_name
 
+    # Internal Method: Validate the engine-name argument against this adapter's environment.
+    def _ensure_environment(self, engine_name: Optional[str]) -> None:
+        # A per-environment adapter must never silently execute against a
+        # different environment than the one it was constructed for.
+        if engine_name is not None and engine_name != self.env_name:
+            raise ValueError(
+                f"EngineExecuteAdapter for environment '{self.env_name}' "
+                f"received mismatched engine_name '{engine_name}'."
+            )
+
+    # Internal Method: Backtick-quote a single SQL identifier, escaping embedded backticks.
     @staticmethod
     def _q(name: str) -> str:
-        """Backtick-quote a single SQL identifier, escaping embedded backticks."""
         return f"`{name.replace('`', '``')}`"
 
+    # Internal Method: Backtick-quote a schema-qualified table name.
     @staticmethod
     def _qt(schema_name: str, table_name: str) -> str:
-        """Backtick-quote a schema-qualified table name."""
         return f"`{schema_name}`.`{table_name}`"
 
+    # Internal Method: Normalize NULL/NaN-like strings to real NULLs before binding.
     @staticmethod
     def _normalize_sql_value(value):
         if value is None:
@@ -46,28 +77,33 @@ class EngineExecuteAdapter:
             return value
         return value
 
-    def execute_query(self, engine_name, query, schema_name=None, params=None, commit=False, return_exception=False, verbose=False, query_id=None):
+    # Public Method: Execute a single query through the SQLAlchemy engine.
+    def execute_query(self, engine_name, query, schema_name=None, params=None, commit=False, return_exception=False, verbose=False, query_id=None) -> Union[List[Any], Tuple[str, str, Any]]:
+
+        # Validate the environment name before touching the database.
+        self._ensure_environment(engine_name)
 
         # If verbose is enabled, print the command being executed
         if verbose:
             print_sql(query, title=f"Executing query{f' [{query_id}]' if query_id else ''}")
 
-        connection_ctx = self._graphdb.engine[engine_name].begin() if commit else self._graphdb.engine[engine_name].connect()
+        # Open a transaction-scoped connection when committing; read-only otherwise.
+        connection_ctx = self.engine.begin() if commit else self.engine.connect()
         try:
             with connection_ctx as connection:
                 if schema_name:
                     connection.execute(text(f"USE {self._q(schema_name)}"))
                 result = connection.execute(text(query), parameters=params or {})
                 if result.returns_rows:
-                    rows = result.fetchall()
+                    rows = list(result.fetchall())
                 else:
                     rows = []
         except (DataError, IntegrityError, SQLAlchemyError) as e:
             if return_exception:
-                # You can return different levels of detail here
+                # Return a (type, message, dbapi_code) tuple for callers that
+                # inspect failures instead of unwinding (e.g. duplicate keys).
                 error_type = type(e).__name__      # e.g. "DataError"
                 error_message = str(e)             # human-readable
-                # if you want the underlying DBAPI code, it's in e.orig (if available)
                 dbapi_code = getattr(e.orig, "args", [None])[0] if hasattr(e, "orig") else None
                 return error_type, error_message, dbapi_code
             else:
@@ -76,11 +112,13 @@ class EngineExecuteAdapter:
                 raise
         return rows
 
-    #----------------------------------------------------#
-    # Method: Executes query into a file using streaming #
-    #----------------------------------------------------#
+    # Public Method: Stream SELECT results row by row into a JSON-lines file.
     def execute_query_stream_to_file(self, engine_name, query, schema_name=None, params=None, *, fetch_size=1000, output_file=None, verbose=False, query_id=None):
 
+        # Validate the environment name before touching the database.
+        self._ensure_environment(engine_name)
+
+        # Fail fast when the caller forgot the destination file.
         if not output_file:
             raise ValueError("output_file must be provided")
 
@@ -88,19 +126,24 @@ class EngineExecuteAdapter:
         if verbose:
             print_sql(query, title=f"Executing query in streaming mode{f' [{query_id}]' if query_id else ''}")
 
+        # Create the destination directory so streaming can open the file directly.
         os.makedirs(os.path.dirname(os.path.abspath(output_file)), exist_ok=True)
 
-        connection = self._graphdb.engine[engine_name].connect()
+        # Hold one connection for the whole stream and release it in finally.
+        connection = self.engine.connect()
         try:
             if schema_name:
                 connection.execute(text(f"USE {self._q(schema_name)}"))
 
+            # Server-side cursors keep memory flat for multi-million-row results.
             exec_conn = connection.execution_options(stream_results=True)
             result = exec_conn.execute(text(query), parameters=params)
 
+            # Only SELECT-style results produce rows to stream.
             if not result.returns_rows:
                 raise ValueError("execute_query_stream_to_file only supports SELECT queries")
 
+            # Write each row as a JSON line so downstream readers can consume incrementally.
             with open(output_file, "w", encoding="utf-8") as f:
                 while True:
                     chunk = result.fetchmany(fetch_size)
@@ -109,6 +152,7 @@ class EngineExecuteAdapter:
                     for row in chunk:
                         f.write(json.dumps(dict(row._mapping), ensure_ascii=False, default=str) + "\n")
 
+        # Invalidate the pooled connection on memory blowups so poisoned state is never reused.
         except MemoryError:
             try:
                 connection.invalidate()
@@ -116,24 +160,27 @@ class EngineExecuteAdapter:
                 pass
             raise
 
+        # Surface driver errors with context, then re-raise for caller handling.
         except (DataError, IntegrityError, SQLAlchemyError) as e:
             print(f"\033[91mError executing query{f' [{query_id}]' if query_id else ''}.\033[0m")
             print(e)
             raise
 
+        # Always return the connection to the pool, even after failures.
         finally:
             try:
                 connection.close()
             except Exception:
                 pass
 
-    #----------------------------------------------------#
-    # Method: Execute a single-row upsert safely         #
-    #----------------------------------------------------#
+    # Public Method: Execute a single-row upsert safely with optional eval output.
     def execute_upsert_row(self, engine_name, schema_name, table_name, key_column_names, key_column_values, upd_column_names, upd_column_values, actions=()):
         """
         Possible actions: 'print', 'eval', 'commit'
         """
+
+        # Validate the environment name before touching the database.
+        self._ensure_environment(engine_name)
 
         # Generate the full table name
         t = f'{schema_name}.{table_name}'
@@ -142,6 +189,7 @@ class EngineExecuteAdapter:
         num_upd_columns = len(upd_column_names)
         num_key_columns = len(key_column_names)
 
+        # Bind normalized key and update values as named SQL parameters.
         sql_params = {
             key_column_names[k]: self._normalize_sql_value(key_column_values[k])
             for k in range(num_key_columns)
@@ -159,11 +207,11 @@ class EngineExecuteAdapter:
 
             # Define the colour map
             colour_map = {
-                'no change'     : 'green',
-                'new value'     : 'cyan',
-                'set to null'   : 'red',
-                'key exists'    : 'green',
-                'key is new'    : 'cyan'
+                'no change'  : 'green',
+                'new value'  : 'cyan',
+                'set to null': 'red',
+                'key exists' : 'green',
+                'key is new' : 'cyan'
             }
 
             # Generate SELECT statement
@@ -250,8 +298,8 @@ class EngineExecuteAdapter:
         if 'print' in actions:
             stmt = text(sql_query_commit).bindparams(**sql_params)
             print(stmt.compile(
-                dialect=MySQLDialect(),
-                compile_kwargs={"literal_binds": True}
+                dialect        = MySQLDialect(),
+                compile_kwargs = {"literal_binds": True}
             ))
 
         # Execute commit
@@ -270,10 +318,11 @@ class EngineExecuteAdapter:
         # Return the test results
         return eval_results
 
-    #------------------------------------------------------------------#
-    # Method: Executes/Evaluates a query using ON DUPLICATE KEY UPDATE #
-    #------------------------------------------------------------------#
+    # Public Method: Evaluate and patch a query's rows via ON DUPLICATE KEY UPDATE.
     def execute_query_as_safe_inserts(self, engine_name, schema_name, table_name, query, key_column_names, upd_column_names, eval_column_names=None, actions=(), verbose=False, query_id=None):
+
+        # Validate the environment name before touching the database.
+        self._ensure_environment(engine_name)
 
         # Target table path
         t = target_table_path = f'{schema_name}.{table_name}'
@@ -297,7 +346,6 @@ class EngineExecuteAdapter:
             # If verbose is enabled, print the command being executed
             if verbose or 'print' in actions:
                 print_sql(query_eval, title=f"Executing query as safe inserts{f' [{query_id}][eval]' if query_id else ''}")
-
 
             # Execute the evaluation query and print the results
             out = self.execute_query(engine_name=engine_name, query=query_eval)
@@ -327,10 +375,11 @@ class EngineExecuteAdapter:
             # Execute the commit query in the shell
             self.execute_query_in_shell(engine_name=engine_name, query=query_commit)
 
-    #------------------------------------------------------------------------------#
-    # Method: Executes/Evaluates a query using ON DUPLICATE KEY UPDATE (in chunks) #
-    #------------------------------------------------------------------------------#
+    # Public Method: Evaluate and patch a query's rows via ON DUPLICATE KEY UPDATE, optionally chunked.
     def execute_query_as_safe_inserts_in_chunks(self, engine_name, schema_name, table_name, query, key_column_names, upd_column_names, eval_column_names=None, actions=(), table_to_chunk=None, chunk_filter=None, chunk_size=None, row_id_name=None, show_progress=False, verbose=False, query_id=None):
+
+        # Validate the environment name before touching the database.
+        self._ensure_environment(engine_name)
 
         # Target table path
         t = target_table_path = f'{schema_name}.{table_name}'
@@ -341,7 +390,7 @@ class EngineExecuteAdapter:
             # Strip semicolon from inner query if needed
             base_query = query.strip().rstrip(';')
 
-            # Build base commit query (template, to be filled with chunk conditions)
+            # Internal Function: Build the chunked commit query template for one row_id window.
             def build_chunked_commit_query(chunk_condition):
                 return f"""
                     INSERT INTO {target_table_path}
@@ -363,6 +412,7 @@ class EngineExecuteAdapter:
             use_dense_boundaries = table_to_chunk is not None or chunk_filter is not None
             filter_clause = f"WHERE {chunk_filter}" if chunk_filter else ""
 
+            # Dense discovery for filtered/aliased sources; fixed-width ranges otherwise.
             if use_dense_boundaries:
                 # Discover dense chunk boundaries over the actual filtered rows.
                 # Each boundary returned is the last row_id of a chunk_size block.
@@ -384,10 +434,12 @@ class EngineExecuteAdapter:
                 row_num_min = self.execute_query(engine_name, f"SELECT COALESCE(MIN({row_id_field}), 0) FROM {chunk_source} {filter_clause}")[0][0]
                 row_num_max = self.execute_query(engine_name, f"SELECT COALESCE(MAX({row_id_field}), 0) FROM {chunk_source} {filter_clause}")[0][0]
 
+                # Bail out cleanly when the chunk source has no rows.
                 if row_num_min is None or row_num_max is None or (row_num_min == 0 and row_num_max == 0):
                     print("⚠️ No rows found to process.")
                     return
 
+                # Close the final chunk up to the absolute maximum row_id.
                 if not boundaries or boundaries[-1] != row_num_max:
                     boundaries.append(row_num_max)
                 starts = [row_num_min] + [b + 1 for b in boundaries[:-1]]
@@ -397,10 +449,12 @@ class EngineExecuteAdapter:
                 row_num_min = self.execute_query(engine_name, f"SELECT MIN({row_id_field}) FROM {chunk_source}")[0][0]
                 row_num_max = self.execute_query(engine_name, f"SELECT MAX({row_id_field}) FROM {chunk_source}")[0][0]
 
+                # Bail out cleanly when the chunk source has no rows.
                 if row_num_min is None or row_num_max is None:
                     print("⚠️ No rows found to process.")
                     return
 
+                # Widen the range by one so BETWEEN covers every row inclusive of boundaries.
                 row_num_min -= 1
                 row_num_max += 1
                 starts = list(range(row_num_min, row_num_max, chunk_size))
@@ -411,11 +465,14 @@ class EngineExecuteAdapter:
                 chunk_condition = f"{'WHERE' if 'WHERE' not in base_query.upper() else 'AND'} {row_id_name} BETWEEN {start} AND {end}"
                 chunked_query = build_chunked_commit_query(chunk_condition)
 
+                # Optionally print each chunked query before execution.
                 if 'print' in actions:
                     print(chunked_query)
 
+                # Execute the chunk in the shell so huge statements skip Python entirely.
                 self.execute_query_in_shell(engine_name=engine_name, query=chunked_query)
 
+            # Chunked path handled; skip the non-chunked commit below.
             return
 
         # Evaluate the patch operation
@@ -463,10 +520,11 @@ class EngineExecuteAdapter:
             # Execute the commit query in the shell
             self.execute_query_in_shell(engine_name=engine_name, query=query_commit)
 
-    #-------------------------------------------------#
-    # Method: Executes a query sequentially by chunks #
-    #-------------------------------------------------#
+    # Public Method: Execute a query sequentially by row_id chunks in the shell.
     def execute_query_in_chunks(self, engine_name, schema_name, table_name, query, has_filters=None, table_to_chunk=None, chunk_filter=None, chunk_size=1000000, row_id_name='row_id', show_progress=False, verbose=False, query_id=None):
+
+        # Validate the environment name before touching the database.
+        self._ensure_environment(engine_name)
 
         # If verbose is enabled, print the command being executed
         if verbose:
@@ -496,6 +554,7 @@ class EngineExecuteAdapter:
         use_dense_boundaries = table_to_chunk is not None or chunk_filter is not None
         filter_clause = f"WHERE {chunk_filter}" if chunk_filter else ""
 
+        # Dense discovery for filtered/aliased sources; fixed-width ranges otherwise.
         if use_dense_boundaries:
             # Discover dense chunk boundaries over the actual filtered rows.
             # Each boundary returned is the last row_id of a chunk_size block.
@@ -517,10 +576,12 @@ class EngineExecuteAdapter:
             row_num_min = self.execute_query(engine_name=engine_name, query=f"SELECT COALESCE(MIN({row_id_name_no_alias}), 0) FROM {chunk_source} {filter_clause}", query_id=query_id)[0][0]
             row_num_max = self.execute_query(engine_name=engine_name, query=f"SELECT COALESCE(MAX({row_id_name_no_alias}), 0) FROM {chunk_source} {filter_clause}", query_id=query_id)[0][0]
 
+            # Bail out cleanly when the chunk source has no rows.
             if row_num_min is None or row_num_max is None or (row_num_min == 0 and row_num_max == 0):
                 print("⚠️ No rows found to process.")
                 return
 
+            # Close the final chunk up to the absolute maximum row_id.
             if not boundaries or boundaries[-1] != row_num_max:
                 boundaries.append(row_num_max)
             starts = [row_num_min] + [b + 1 for b in boundaries[:-1]]
@@ -530,10 +591,12 @@ class EngineExecuteAdapter:
             row_num_min = self.execute_query(engine_name=engine_name, query=f"SELECT MIN({row_id_name_no_alias}) FROM {chunk_source}", query_id=query_id)[0][0]
             row_num_max = self.execute_query(engine_name=engine_name, query=f"SELECT MAX({row_id_name_no_alias}) FROM {chunk_source}", query_id=query_id)[0][0]
 
+            # Bail out cleanly when the chunk source has no rows.
             if row_num_min is None or row_num_max is None:
                 print("⚠️ No rows found to process.")
                 return
 
+            # Widen the range by one so BETWEEN covers every row inclusive of boundaries.
             row_num_min -= 1
             row_num_max += 1
             starts = list(range(row_num_min, row_num_max, chunk_size))
@@ -548,56 +611,30 @@ class EngineExecuteAdapter:
             # Execute the query
             self.execute_query_in_shell(engine_name=engine_name, query=sql_query, query_id=query_id)
 
-    #---------------------------------------------#
-    # Method: Executes a query in the MySQL shell #
-    #---------------------------------------------#
+    # Public Method: Execute a query through the environment's MySQL CLI in the shell.
     def execute_query_in_shell(self, engine_name, query, verbose=False, query_id=None):
 
-        # Define the shell command for execution
-        shell_command = self._graphdb.base_command_mysql[engine_name] + ["-e", query]
+        # Validate the environment name before touching the database.
+        self._ensure_environment(engine_name)
 
         # If verbose is enabled, print the command being executed
         if verbose:
             print_sql(query, title=f"Executing query in shell{f' [{query_id}]' if query_id else ''}")
 
-        # Execute the command using subprocess and capture the output and errors
-        result = subprocess.run(
-            shell_command,
-            stdout=subprocess.PIPE,
-            stderr=subprocess.PIPE,
-            text=True,
-            env=self._graphdb.subprocess_env.get(engine_name),
-        )
+        # Delegate the shell transport to the environment's CLI gateway: it owns
+        # the connection flags, SSL options, MYSQL_PWD env and stdin streaming.
+        self._mysql_client.execute_query(query, query_id=query_id)
 
-        # Strip the stderr to remove any leading/trailing whitespace (including newlines)
-        stderr = result.stderr.strip()
+        # If verbose is enabled, confirm success
+        if verbose:
+            print("\033[92m✅ Query executed successfully.\033[0m\n")
+        return True
 
-        # Ignore harmless mysql password warning
-        password_warning = "mysql: [Warning] Using a password on the command line interface can be insecure."
-        clean_stderr = "" if stderr == password_warning else stderr
-
-        # Verify the return code to determine if the command executed successfully
-        if result.returncode == 0:
-            if verbose:
-                print("\033[92m✅ Query executed successfully.\033[0m\n")
-            return True
-
-        # Generate a detailed error message including the command, return code, stderr, and stdout for diagnostics
-        message = (
-            f"Failed to execute query{f' [{query_id}]' if query_id else ''}.\n"
-            f"Return code: {result.returncode}\n"
-            f"STDERR:\n{clean_stderr or '<empty>'}\n"
-            f"STDOUT:\n{result.stdout.strip() or '<empty>'}"
-        )
-
-        # Log the error message and raise an exception with the details
-        sysmsg.critical(message)
-        raise RuntimeError(message)
-
-    #--------------------------------------------------------------#
-    # Method: Executes a query in the MySQL shell from an SQL file #
-    #--------------------------------------------------------------#
+    # Public Method: Execute an SQL file through the environment's MySQL CLI.
     def execute_query_from_file(self, engine_name, file_path, database=None, verbose=False):
+
+        # Validate the environment name before touching the database.
+        self._ensure_environment(engine_name)
 
         # Get absolute file path
         abs_file_path = os.path.abspath(file_path)
@@ -607,127 +644,59 @@ class EngineExecuteAdapter:
             print(f"SQL file does not exist: {abs_file_path}")
             return False
 
-        # Define the shell command for execution, ensuring we don't include -e/--execute to allow for stdin execution
-        shell_command = list(self._graphdb.base_command_mysql[engine_name])
-
-        # Warn if command already contains -e/--execute, as this would conflict with stdin execution
-        if '-e' in shell_command or '--execute' in shell_command:
-            print("Configured mysql command already contains -e/--execute, so stdin SQL will be ignored.")
-            print(f"Command: {shell_command}")
-            return False
-
-        # If a database is specified, add it to the command (after connection parameters but before execution parameters)
-        if database:
-            shell_command.append(database)
-
         # Check if the file is empty before streaming
         if os.path.getsize(abs_file_path) == 0:
             print(f"⚠️  SQL file is empty: {abs_file_path}")
             return False
 
-        # Print command if verbose
+        # If verbose is enabled, print what is being streamed
         if verbose:
-            print('\n')
-            print("Executing command:")
-            print(shell_command)
             print('\n')
             print(f"Streaming SQL from file: {abs_file_path}")
             print('\n')
 
-        # If verbose is enabled, add the flag to show warnings in the mysql command output
-        if verbose:
-            shell_command += ["--show-warnings"]
+        # Delegate the shell transport to the environment's CLI gateway: it owns
+        # gzip-aware streaming, pipe draining and error reporting.
+        self._mysql_client.execute_from_file(abs_file_path, database=database)
 
-        # Stream the SQL file into mysql via a native pipe (gzip -dc ... | mysql ...).
-        # This avoids Python in the data path and is much faster than Python streaming.
-        # stdout/stderr are redirected to temp files so we can't deadlock on full pipes.
+        # If verbose is enabled, confirm success
+        if verbose:
+            print("\033[92m✅ SQL file executed successfully.\033[0m\n")
+        return True
+
+    # Public Method: Thin-port alias executing a query without engine addressing.
+    def execute(self, query: str, schema_name: Optional[str] = None, params: Optional[Dict[str, Any]] = None, commit: bool = False, return_exception: bool = False, query_id: Optional[str] = None) -> Union[List[Any], Tuple[str, str, Any]]:
+
+        # Delegate to the engine-addressed path using this adapter's own environment.
+        return self.execute_query(
+            self.env_name,
+            query,
+            schema_name      = schema_name,
+            params           = params,
+            commit           = commit,
+            return_exception = return_exception,
+            query_id         = query_id,
+        )
+
+    # Public Method: Thin-port alias streaming SELECT results to a JSON-lines file.
+    def execute_stream_to_file(self, query: str, output_file: str, schema_name: Optional[str] = None, params: Optional[Dict[str, Any]] = None, fetch_size: int = 1000, query_id: Optional[str] = None) -> None:
+
+        # Delegate to the engine-addressed path using this adapter's own environment.
+        self.execute_query_stream_to_file(
+            self.env_name,
+            query,
+            schema_name = schema_name,
+            params      = params,
+            fetch_size  = fetch_size,
+            output_file = output_file,
+            query_id    = query_id,
+        )
+
+    # Public Method: Verify connectivity with a trivial SELECT through the engine.
+    def test(self) -> bool:
         try:
-            with tempfile.TemporaryFile() as stdout_file, tempfile.TemporaryFile() as stderr_file:
-                if abs_file_path.endswith('.gz'):
-                    reader_cmd = ['gzip', '-dc', abs_file_path]
-                else:
-                    reader_cmd = ['cat', abs_file_path]
-
-                reader_proc = subprocess.Popen(
-                    reader_cmd,
-                    stdout=subprocess.PIPE,
-                    stderr=subprocess.PIPE,
-                )
-                mysql_proc = subprocess.Popen(
-                    shell_command,
-                    stdin=reader_proc.stdout,
-                    stdout=stdout_file,
-                    stderr=stderr_file,
-                    text=False,
-                    env=self._graphdb.subprocess_env.get(engine_name),
-                )
-                reader_proc.stdout.close()
-
-                mysql_returncode = mysql_proc.wait()
-                reader_stdout, reader_stderr = reader_proc.communicate()
-
-                stdout_file.seek(0)
-                stdout_bytes = stdout_file.read()
-                stderr_file.seek(0)
-                stderr_bytes = stderr_file.read() + reader_stderr
-
-                # SIGPIPE (-13) from the reader is expected when mysql closes stdin early.
-                # Only report a reader failure if it's something other than SIGPIPE.
-                if reader_proc.returncode not in (0, -13):
-                    raise RuntimeError(
-                        f"Failed to read SQL file: {abs_file_path} "
-                        f"(reader return code: {reader_proc.returncode})"
-                    )
-
-                returncode = mysql_returncode
-
-        # Handle file reading errors and subprocess execution errors separately for clearer diagnostics
-        except OSError as exc:
-            print(f"Failed to open SQL file: {abs_file_path}")
-            print(str(exc))
-            raise RuntimeError(f"Failed to open SQL file: {abs_file_path}") from exc
-
-        except Exception as exc:
-            print(f"Failed to execute mysql command for file: {abs_file_path}")
-            print(str(exc))
-            raise RuntimeError(f"Failed to execute mysql command for file: {abs_file_path}") from exc
-
-        # Process the result and handle stderr, ignoring the common password warning
-        warn = "mysql: [Warning] Using a password on the command line interface can be insecure."
-        stderr_text = stderr_bytes.decode('utf-8', errors='replace')
-        stdout_text = stdout_bytes.decode('utf-8', errors='replace')
-        stderr_lines = [
-            line for line in stderr_text.splitlines()
-            if line.strip() and line.strip() != warn
-        ]
-
-        # If verbose, print the command, return code, stderr, and stdout. If not verbose but there are stderr lines (other than the ignored warning), print them with the file path for context.
-        if verbose:
-
-            # Print the executed command and return code
-            print(f"\nmysql command: {' '.join(shell_command)}")
-            print(f"return code: {returncode}")
-
-            # Print stderr if there are any lines to show
-            if stderr_lines:
-                print("\nstderr:")
-                print("\n".join(stderr_lines))
-
-            # Print stdout if there is any output
-            if stdout_text.strip():
-                print("\nstdout:")
-                print(stdout_text)
-
-        else:
-            # If not verbose but there are stderr lines (other than the ignored warning), print them with the file path for context
-            if stderr_lines:
-                print(f"stderr for file: {abs_file_path}")
-                print("\n".join(stderr_lines))
-
-        # Check the return code to determine success or failure of the command execution
-        if returncode != 0:
-            raise RuntimeError(f"mysql command failed for file: {abs_file_path}")
-
-        # If we reach this point, the command executed successfully (return code 0), so we return a result object
-        return types.SimpleNamespace(returncode=returncode, stdout=stdout_text, stderr=stderr_text)
-
+            with self.engine.connect() as connection:
+                connection.execute(text("SELECT 1"))
+                return True
+        except Exception:
+            return False

@@ -2,13 +2,11 @@ from __future__ import annotations
 
 from typing import Any, Dict, Optional
 
+from graphdb.adapters.engine.eng_execute import EngineExecuteAdapter
 from graphdb.adapters.gateways.gtw_dbclient import BaseDBClientGateway
 from graphdb.adapters.gateways.gtw_filesystem import FilesystemGateway
 from graphdb.adapters.gateways.gtw_mysqldump import MySQLDumpBinaryGateway
-from graphdb.adapters.gateways.gtw_sqlalchemy import (
-    SQLAlchemyQueryExecutorGateway,
-    create_sqlalchemy_engine,
-)
+from graphdb.adapters.gateways.gtw_sqlalchemy import create_sqlalchemy_engine
 from graphdb.adapters.schema.sch_column import ColumnSchemaAdapter
 from graphdb.adapters.schema.sch_database import DatabaseSchemaAdapter
 from graphdb.adapters.schema.sch_key import KeySchemaAdapter
@@ -33,13 +31,13 @@ class EnvironmentGateway:
         self.params = params
         self.env_name = env_name
         self._engine = create_sqlalchemy_engine(params)
-        self._query_executor = SQLAlchemyQueryExecutorGateway(self._engine, env_name)
+        self._mysql_client = BaseDBClientGateway(params, env_name)
+        self._query_executor = EngineExecuteAdapter(self._engine, self._mysql_client, env_name)
         self._database = DatabaseSchemaAdapter(self._engine)
         self._key = KeySchemaAdapter(self._engine, graphdb=self)
         self._table = TableSchemaAdapter(self._engine, key_adapter=self._key)
         self._view = ViewSchemaAdapter(self._engine)
         self._column = ColumnSchemaAdapter(self._engine, graphdb=self)
-        self._mysql_client = BaseDBClientGateway(params, env_name)
         self._dump_client = MySQLDumpBinaryGateway(params, env_name)
         self._filesystem = filesystem or FilesystemGateway()
 
@@ -84,7 +82,7 @@ class EnvironmentGateway:
         return self._key
 
     @property
-    def query_executor(self) -> SQLAlchemyQueryExecutorGateway:
+    def query_executor(self) -> EngineExecuteAdapter:
         return self._query_executor
 
     @property
